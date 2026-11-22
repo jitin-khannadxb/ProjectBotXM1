@@ -29,23 +29,23 @@
 
 <!-- ================= SIDEBAR ================= -->
 <aside class="sidebar">
-  <div class="sec">Risk Control (Hardcoded)</div>
+  <div class="sec">Risk Control (Dynamic)</div>
 
   <div class="card">
-    <div class="row"><b>Daily Loss Limit</b><b class="neg">2.0%</b></div>
+    <div class="row"><b>Daily Loss Limit</b><input type="number" id="dailyLossLimit" step="0.1" style="width:50px;padding:2px" />%</div>
     <div class="bar"><div id="lossBar" style="width:0%;background:var(--amber)"></div></div>
     <div class="row" style="margin-top:8px">
-      <span>Used today</span><b id="lossUsed">0.00% / 2.0%</b>
+      <span>Used today</span><b id="lossUsed">0.00% / <span id="dailyLossLimitVal">2.0</span>%</b>
     </div>
-    <div class="row"><span>Consecutive losses</span><b id="consecLoss">0 / 3</b></div>
-    <div class="row"><span>Single trade risk</span><b>1.0%</b></div>
+    <div class="row"><span>Consecutive losses</span><input type="number" id="maxConsecutiveLosses" step="1" style="width:40px;padding:2px" /> max</div>
+    <div class="row"><span>Single trade risk</span><input type="number" id="singleTradeRisk" step="0.1" style="width:50px;padding:2px" />%</div>
   </div>
 
   <div class="card">
-    <div class="row"><b>Max Positions</b><b>2</b></div>
-    <div class="row"><span>Lot size (auto)</span><b>0.01</b></div>
-    <div class="row"><span>Stop loss</span><b>150 pts</b></div>
-    <div class="row"><span>Take profit</span><b>300 pts</b></div>
+    <div class="row"><b>Max Positions</b><input type="number" id="maxPositions" step="1" style="width:40px;padding:2px" /></div>
+    <div class="row"><span>Lot size</span><input type="number" id="lotSize" step="0.01" style="width:50px;padding:2px" /></div>
+    <div class="row"><span>Stop loss</span><input type="number" id="slPips" step="1" style="width:50px;padding:2px" /> pts</div>
+    <div class="row"><span>Take profit</span><input type="number" id="tpPips" step="1" style="width:50px;padding:2px" /> pts</div>
   </div>
 
   <div class="sec">News Filter</div>

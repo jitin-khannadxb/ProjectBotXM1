@@ -151,6 +151,18 @@ price_history: List[float] = []
 last_trade_ts: float | None = None
 MIN_CONFIDENCE: float = 95.0
 
+# Dynamic risk parameters (configurable via API)
+RISK_PARAMS: dict = {
+    "daily_loss_limit_pct": 2.0,
+    "max_consecutive_losses": 3,
+    "single_trade_risk_pct": 1.0,
+    "max_positions": 2,
+    "lot_size": 0.01,
+    "sl_pips": 150,
+    "tp_pips": 300,
+    "max_daily_trades": 50,
+}
+
 # ---------------------------------------------------------------------------
 # WebSocket connection manager
 # ---------------------------------------------------------------------------
@@ -206,7 +218,7 @@ xm = XM_API(api_key=api_key, account_id=account_id)
 risk = RiskManager()
 
 account_balance = 10000.0
-risk_limits = risk.calculate_limits(account_balance)
+risk_limits = risk.calculate_limits(account_balance, RISK_PARAMS)
 # ---------------------------------------------------------------------------
 # Engine loop
 # ---------------------------------------------------------------------------
@@ -219,7 +231,7 @@ async def _run_sync(func, *args):
 
 async def engine_loop():
     """Background loop: risk check -> quote -> signal -> order -> P&L -> broadcast."""
-    global is_running, kill_switch_active, current_price, account_balance, risk_limits, last_trade_ts, MIN_CONFIDENCE
+    global is_running, kill_switch_active, current_price, account_balance, risk_limits, last_trade_ts, MIN_CONFIDENCE, RISK_PARAMS
 
     logger.info(
         f"Engine loop started | DEMO_MODE={DEMO_MODE} | Symbols: {SYMBOLS_CONFIG}"
@@ -237,7 +249,7 @@ async def engine_loop():
                 summary = await _run_sync(xm.get_account_summary)
                 if summary:
                     account_balance = float(summary["balance"])
-                    risk_limits = risk.calculate_limits(account_balance)
+                    risk_limits = risk.calculate_limits(account_balance, RISK_PARAMS)
 
             state = await risk.get_state()
 
@@ -245,7 +257,7 @@ async def engine_loop():
                 await asyncio.sleep(LOOP_INTERVAL)
                 continue
 
-            can_trade = await risk.can_trade(account_balance)
+            can_trade = await risk.can_trade(account_balance, RISK_PARAMS)
             if not can_trade:
                 reasons = []
                 if state["is_locked"]:
@@ -558,7 +570,7 @@ async def lifespan(app: FastAPI):
     except Exception:
         account_balance = risk.fetch_balance()
 
-    risk_limits = risk.calculate_limits(account_balance)
+    risk_limits = risk.calculate_limits(account_balance, RISK_PARAMS)
 
     # Initialize Redis cache (non-blocking if unavailable)
     await cache.connect()
@@ -700,6 +712,30 @@ async def v1_set_confidence(payload: dict):
 @v1_router.get("/strategy/confidence")
 async def v1_get_confidence():
     return {"min_confidence": MIN_CONFIDENCE, "api_version": "v1"}
+
+
+@v1_router.get("/risk/params")
+async def v1_get_risk_params():
+    return {"params": RISK_PARAMS, "api_version": "v1"}
+
+
+@v1_router.post("/risk/params")
+async def v1_set_risk_params(payload: dict):
+    global RISK_PARAMS, risk_limits
+    for key, value in payload.items():
+        if key in RISK_PARAMS:
+            try:
+                RISK_PARAMS[key] = type(RISK_PARAMS[key])(value)
+            except (ValueError, TypeError):
+                RISK_PARAMS[key] = value
+    # Recalculate limits with new params
+    risk_limits = risk.calculate_limits(account_balance, RISK_PARAMS)
+    await manager.broadcast("logs", {
+        "msg": f"Risk parameters updated: {list(payload.keys())}",
+        "type": "info",
+        "time": datetime.now().strftime("%H:%M:%S"),
+    })
+    return {"status": "updated", "params": RISK_PARAMS, "api_version": "v1"}
 
 
 @v1_router.get("/risk")

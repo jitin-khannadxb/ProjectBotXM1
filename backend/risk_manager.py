@@ -46,16 +46,24 @@ class RiskManager:
         """Mock balance fetch. Will be connected to the live API later."""
         return 10000.0
 
-    def calculate_limits(self, balance: float) -> Dict[str, float]:
+    def calculate_limits(self, balance: float, params: dict | None = None) -> Dict[str, float]:
         """Return risk-based capital limits derived from the account balance."""
-        target_usd = round(balance * 0.02, 2)
-        max_loss_usd = round(balance * 0.01, 2)
-        risk_per_trade_usd = round(balance * 0.015, 2)
-        sl_pips = 150
-        tp_pips = 300
+        p = params or {
+            "daily_loss_limit_pct": 2.0,
+            "max_consecutive_losses": 3,
+            "single_trade_risk_pct": 1.0,
+            "max_positions": 2,
+            "lot_size": 0.01,
+            "sl_pips": 150,
+            "tp_pips": 300,
+        }
+        target_usd = round(balance * p.get("target_pct", 0.02), 2)
+        max_loss_usd = round(balance * p.get("daily_loss_limit_pct", 2.0) / 100, 2)
+        risk_per_trade_usd = round(balance * p.get("single_trade_risk_pct", 1.0) / 100, 2)
+        sl_pips = p.get("sl_pips", 150)
+        tp_pips = p.get("tp_pips", 300)
 
-        lot_size = (risk_per_trade_usd / sl_pips) / 10
-        lot_size = max(0.01, round(lot_size, 2))
+        lot_size = p.get("lot_size", 0.01)
 
         return {
             "target_usd": target_usd,
@@ -82,16 +90,24 @@ class RiskManager:
         finally:
             await session.close()
 
-    async def can_trade(self, balance: float) -> bool:
+    async def can_trade(self, balance: float, params: dict | None = None) -> bool:
         """Determine whether a new trade is allowed based on risk limits.
         Harvests profit every PROFIT_WITHDRAW_THRESHOLD ($100) and continues trading."""
         state = await self.get_state()
-        limits = self.calculate_limits(balance)
+        p = params or {
+            "max_consecutive_losses": 3,
+            "daily_loss_limit_pct": 2.0,
+        }
+        limits = self.calculate_limits(balance, p)
 
         if state["is_locked"]:
             return False
 
         if state["daily_pnl"] <= -limits["max_loss_usd"]:
+            return False
+
+        # Consecutive losses check
+        if state["consecutive_losses"] >= p.get("max_consecutive_losses", 3):
             return False
 
         # Profit harvesting: every $100 profit, "withdraw" it and keep trading

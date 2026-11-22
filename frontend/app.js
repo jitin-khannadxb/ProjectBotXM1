@@ -396,9 +396,74 @@ async function initConfidence() {
     confVal.textContent = val + '%';
   } catch (e) {
     console.error('Failed to fetch confidence:', e);
+}
+
+// ---------- Risk Params (dynamic) ----------
+const riskInputs = {
+  dailyLossLimit: document.getElementById('dailyLossLimit'),
+  maxConsecutiveLosses: document.getElementById('maxConsecutiveLosses'),
+  singleTradeRisk: document.getElementById('singleTradeRisk'),
+  maxPositions: document.getElementById('maxPositions'),
+  lotSize: document.getElementById('lotSize'),
+  slPips: document.getElementById('slPips'),
+  tpPips: document.getElementById('tpPips'),
+};
+const dailyLossLimitVal = document.getElementById('dailyLossLimitVal');
+
+async function initRiskParams() {
+  try {
+    const r = await fetch(`${API_BASE}/api/v1/risk/params`);
+    const d = await r.json();
+    const p = d.params || {};
+    if (p.daily_loss_limit_pct !== undefined) {
+      riskInputs.dailyLossLimit.value = p.daily_loss_limit_pct;
+      dailyLossLimitVal.textContent = p.daily_loss_limit_pct;
+    }
+    if (p.max_consecutive_losses !== undefined) riskInputs.maxConsecutiveLosses.value = p.max_consecutive_losses;
+    if (p.single_trade_risk_pct !== undefined) riskInputs.singleTradeRisk.value = p.single_trade_risk_pct;
+    if (p.max_positions !== undefined) riskInputs.maxPositions.value = p.max_positions;
+    if (p.lot_size !== undefined) riskInputs.lotSize.value = p.lot_size;
+    if (p.sl_pips !== undefined) riskInputs.slPips.value = p.sl_pips;
+    if (p.tp_pips !== undefined) riskInputs.tpPips.value = p.tp_pips;
+  } catch (e) {
+    console.error('Failed to fetch risk params:', e);
   }
 }
 
+function setupRiskParamListeners() {
+  const debounceMap = {};
+  Object.entries(riskInputs).forEach(([key, input]) => {
+    if (!input) return;
+    input.addEventListener('input', () => {
+      clearTimeout(debounceMap[key]);
+      debounceMap[key] = setTimeout(() => {
+        const val = input.value;
+        const update = {};
+        if (key === 'dailyLossLimit') update.daily_loss_limit_pct = parseFloat(val);
+        else if (key === 'maxConsecutiveLosses') update.max_consecutive_losses = parseInt(val);
+        else if (key === 'singleTradeRisk') update.single_trade_risk_pct = parseFloat(val);
+        else if (key === 'maxPositions') update.max_positions = parseInt(val);
+        else if (key === 'lotSize') update.lot_size = parseFloat(val);
+        else if (key === 'slPips') update.sl_pips = parseInt(val);
+        else if (key === 'tpPips') update.tp_pips = parseInt(val);
+        fetch(`${API_BASE}/api/v1/risk/params`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(update),
+        }).then(r => r.json()).then(d => {
+          console.log('Risk param updated:', d);
+          if (update.daily_loss_limit_pct !== undefined) {
+            dailyLossLimitVal.textContent = update.daily_loss_limit_pct;
+          }
+        }).catch(err => console.error('Risk param update failed:', err));
+      }, 500);
+    });
+  });
+}
+
+// ---------- Initialize ----------
 initChart();
 initConfidence();
+initRiskParams();
+setupRiskParamListeners();
 initWS();
