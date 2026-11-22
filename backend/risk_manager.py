@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import AsyncSessionLocal
 from models import DailyState, Trade, Position, AuditLog
+from config import settings
 
 
 class RiskManager:
@@ -82,7 +83,8 @@ class RiskManager:
             await session.close()
 
     async def can_trade(self, balance: float) -> bool:
-        """Determine whether a new trade is allowed based on risk limits."""
+        """Determine whether a new trade is allowed based on risk limits.
+        Harvests profit every PROFIT_WITHDRAW_THRESHOLD ($100) and continues trading."""
         state = await self.get_state()
         limits = self.calculate_limits(balance)
 
@@ -91,6 +93,30 @@ class RiskManager:
 
         if state["daily_pnl"] <= -limits["max_loss_usd"]:
             return False
+
+        # Profit harvesting: every $100 profit, "withdraw" it and keep trading
+        threshold = settings.PROFIT_WITHDRAW_THRESHOLD
+        if state["daily_pnl"] >= threshold:
+            session = await self._get_session()
+            try:
+                today = date.today().isoformat()
+                db_state = await self._ensure_daily_state(session, today)
+                harvested = int(db_state.daily_pnl // threshold)
+                if harvested > 0:
+                    remaining = round(db_state.daily_pnl - (harvested * threshold), 2)
+                    db_state.daily_pnl = remaining
+                    if db_state.peak_pnl > remaining:
+                        db_state.peak_pnl = remaining
+                    await session.commit()
+                    await self.audit_log(
+                        event_type="PROFIT_WITHDRAWN",
+                        message=f"Withdrew ${harvested * threshold:.2f} profit ({harvested} x $100), remaining ${remaining:.2f}",
+                        level="INFO",
+                        meta_data=f'{{"harvested": {harvested * threshold:.2f}, "remaining": {remaining:.2f}}}',
+                    )
+            finally:
+                await session.close()
+            return True
 
         # Trailing lock: peak reached and given back 0.5% of balance
         if (

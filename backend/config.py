@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     DEFAULT_SL_PIPS: int = 150
     DEFAULT_TP_PIPS: int = 300
     DEFAULT_LOT_SIZE: float = 0.01
+    PROFIT_WITHDRAW_THRESHOLD: float = 100.0
     MAX_DAILY_TRADES: int = 50
     MAX_POSITIONS_PER_SYMBOL: int = 1
     MAX_SYMBOLS: int = 5
