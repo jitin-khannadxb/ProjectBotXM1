@@ -15,25 +15,27 @@ const CHANNELS = ['prices', 'book', 'signals', 'trades', 'logs', 'risk'];
 const sockets = {};
 
 // ---------- Chart ----------
-const priceHistory = { labels: [], data: [] };
+const CANDLE_WINDOW = 30; // seconds per candle
+const priceHistory = []; // array of {t, o, h, l, c}
+let currentCandle = null;
 let chart = null;
 
 function initChart() {
   const ctx = document.getElementById('chart');
   if (!ctx || chart) return;
   chart = new Chart(ctx, {
-    type: 'line',
+    type: 'candlestick',
     data: {
-      labels: priceHistory.labels,
       datasets: [{
-        label: 'Price',
-        data: priceHistory.data,
+        label: 'BTCUSD',
+        data: priceHistory,
+        color: {
+          up: '#00ff88',
+          down: '#ff4444',
+          unchanged: '#888888',
+        },
         borderColor: '#00ff88',
-        backgroundColor: 'rgba(0,255,136,0.1)',
-        borderWidth: 2,
-        pointRadius: 0,
-        tension: 0.4,
-        fill: true,
+        borderWidth: 1,
       }],
     },
     options: {
@@ -41,7 +43,14 @@ function initChart() {
       maintainAspectRatio: false,
       animation: false,
       scales: {
-        x: { display: false },
+        x: {
+          type: 'time',
+          time: {
+            unit: 'minute',
+            displayFormats: { minute: 'HH:mm' },
+          },
+          display: false,
+        },
         y: {
           grid: { color: 'rgba(255,255,255,0.05)' },
           ticks: { color: '#888', font: { size: 10 } },
@@ -49,23 +58,38 @@ function initChart() {
       },
       plugins: {
         legend: { display: false },
-        tooltip: { mode: 'index', intersect: false },
+        tooltip: { mode: 'nearest', intersect: false },
       },
     },
   });
 }
 
-function updateChart(price, time) {
+function updateChart(price, timeStr) {
+  const now = new Date();
+  const bucket = Math.floor(now.getTime() / (CANDLE_WINDOW * 1000));
+
+  if (!currentCandle || currentCandle.bucket !== bucket) {
+    if (currentCandle) {
+      priceHistory.push(currentCandle);
+      if (priceHistory.length > 60) priceHistory.shift();
+    }
+    currentCandle = {
+      bucket,
+      x: now,
+      o: price,
+      h: price,
+      l: price,
+      c: price,
+    };
+  } else {
+    currentCandle.h = Math.max(currentCandle.h, price);
+    currentCandle.l = Math.min(currentCandle.l, price);
+    currentCandle.c = price;
+  }
+
   if (!chart) {
     initChart();
     if (!chart) return;
-  }
-  const MAX = 60;
-  priceHistory.labels.push(time);
-  priceHistory.data.push(price);
-  if (priceHistory.labels.length > MAX) {
-    priceHistory.labels.shift();
-    priceHistory.data.shift();
   }
   chart.update('none');
 }
