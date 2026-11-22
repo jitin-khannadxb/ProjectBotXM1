@@ -14,6 +14,62 @@ const WS_BASE = API_BASE.replace(/^http/, 'ws');
 const CHANNELS = ['prices', 'book', 'signals', 'trades', 'logs', 'risk'];
 const sockets = {};
 
+// ---------- Chart ----------
+const priceHistory = { labels: [], data: [] };
+let chart = null;
+
+function initChart() {
+  const ctx = document.getElementById('chart');
+  if (!ctx || chart) return;
+  chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: priceHistory.labels,
+      datasets: [{
+        label: 'Price',
+        data: priceHistory.data,
+        borderColor: '#00ff88',
+        backgroundColor: 'rgba(0,255,136,0.1)',
+        borderWidth: 2,
+        pointRadius: 0,
+        tension: 0.4,
+        fill: true,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      scales: {
+        x: { display: false },
+        y: {
+          grid: { color: 'rgba(255,255,255,0.05)' },
+          ticks: { color: '#888', font: { size: 10 } },
+        },
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: { mode: 'index', intersect: false },
+      },
+    },
+  });
+}
+
+function updateChart(price, time) {
+  if (!chart) {
+    initChart();
+    if (!chart) return;
+  }
+  const MAX = 60;
+  priceHistory.labels.push(time);
+  priceHistory.data.push(price);
+  if (priceHistory.labels.length > MAX) {
+    priceHistory.labels.shift();
+    priceHistory.data.shift();
+  }
+  chart.update('none');
+}
+
 // ---------- WebSocket setup ----------
 function connectWS(channel) {
   const ws = new WebSocket(`${WS_BASE}/ws/${channel}`);
@@ -73,6 +129,7 @@ function handlePrices(data) {
     el.textContent = data.price.toFixed(2);
     el.className = 'price ' + data.change;
   }
+  updateChart(data.price, data.time);
 }
 
 // ---------- Order Book ----------
@@ -266,4 +323,5 @@ confSlider.addEventListener('input', (e) => {
 });
 
 // ---------- Initialize ----------
+initChart();
 initWS();
