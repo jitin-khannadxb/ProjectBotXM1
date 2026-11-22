@@ -601,11 +601,6 @@ async def v1_start_engine():
         raise HTTPException(status_code=400, detail="Kill switch is active. Reset required.")
     is_running = True
     kill_switch_active = False
-    await risk.audit_log(
-        event_type="ENGINE_START",
-        message="Trading engine started",
-        level="INFO",
-    )
     await manager.broadcast("logs", {
         "msg": "ENGINE STARTED",
         "type": "success",
@@ -619,11 +614,6 @@ async def v1_kill_engine():
     global is_running, kill_switch_active
     is_running = False
     kill_switch_active = True
-    await risk.audit_log(
-        event_type="KILL_SWITCH_ACTIVATED",
-        message="Kill switch activated by user",
-        level="WARN",
-    )
     await manager.broadcast("logs", {
         "msg": "KILL SWITCH ACTIVATED",
         "type": "danger",
@@ -636,11 +626,6 @@ async def v1_kill_engine():
 async def v1_reset_engine():
     global kill_switch_active
     kill_switch_active = False
-    await risk.audit_log(
-        event_type="KILL_SWITCH_RESET",
-        message="Kill switch reset by admin",
-        level="INFO",
-    )
     await manager.broadcast("logs", {
         "msg": "Kill switch reset. Ready to start.",
         "type": "info",
