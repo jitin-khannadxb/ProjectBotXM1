@@ -299,8 +299,13 @@ async def engine_loop():
             side = "BUY" if price_cents % 2 == 0 else "SELL"
 
             # Calculate SL / TP prices (absolute prices for the API)
-            # Pip size per symbol: GOLD = 0.1, EURUSD = 0.0001
-            pip_size = 0.1 if current_symbol == "GOLD" else 0.0001
+            # Pip size per symbol: GOLD = 0.1, BTCUSD/crypto = 1.0, forex = 0.0001
+            if current_symbol == "GOLD":
+                pip_size = 0.1
+            elif any(c in current_symbol.upper() for c in ["BTC", "ETH", "XRP", "SOL", "ADA"]):
+                pip_size = 1.0
+            else:
+                pip_size = 0.0001
             if side == "BUY":
                 sl_price = round(price - risk_limits["sl_pips"] * pip_size, 2)
                 tp_price = round(price + risk_limits["tp_pips"] * pip_size, 2)
