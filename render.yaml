@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: scalpai-backend
+    env: docker
+    repo: https://github.com/your-org/scalpai-system
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: .
+    envVars:
+      - key: MTAPI_KEY
+        sync: false
+      - key: MTAPI_ACCOUNT_ID
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: LOG_LEVEL
+        value: INFO
+      - key: DEBUG
+        value: false
+    healthCheckPath: /api/health

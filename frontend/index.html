@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ScalpAI · Risk-First Trading Terminal</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ================= TOP BAR ================= -->
+<header class="topbar">
+  <div class="brand">SCALP<span>AI</span></div>
+  <div class="symbol">
+    <b>GOLD</b>
+    <span class="price up" id="topPrice">2341.28</span>
+    <span class="badge demo" id="modeBadge">DEMO</span>
+  </div>
+  <div class="symbol">
+    <span class="badge news" id="newsBadge" style="display:none">● NEWS BLOCK</span>
+  </div>
+  <div class="spacer"></div>
+  <div class="stat-mini"><small>Equity</small><b id="equity">$5,000.00</b></div>
+  <div class="stat-mini"><small>Day P&L</small><b class="pos" id="dayPnl">+$0.00</b></div>
+  <div class="stat-mini"><small>Open</small><b id="openPos">0 / 2</b></div>
+  <button class="btn" id="btnEngine">▶ START ENGINE</button>
+  <button class="btn danger" id="btnKill">■ KILL SWITCH</button>
+</header>
+
+<!-- ================= SIDEBAR ================= -->
+<aside class="sidebar">
+  <div class="sec">Risk Control (Hardcoded)</div>
+
+  <div class="card">
+    <div class="row"><b>Daily Loss Limit</b><b class="neg">2.0%</b></div>
+    <div class="bar"><div id="lossBar" style="width:0%;background:var(--amber)"></div></div>
+    <div class="row" style="margin-top:8px">
+      <span>Used today</span><b id="lossUsed">0.00% / 2.0%</b>
+    </div>
+    <div class="row"><span>Consecutive losses</span><b id="consecLoss">0 / 3</b></div>
+    <div class="row"><span>Single trade risk</span><b>1.0%</b></div>
+  </div>
+
+  <div class="card">
+    <div class="row"><b>Max Positions</b><b>2</b></div>
+    <div class="row"><span>Lot size (auto)</span><b>0.01</b></div>
+    <div class="row"><span>Stop loss</span><b>150 pts</b></div>
+    <div class="row"><span>Take profit</span><b>300 pts</b></div>
+  </div>
+
+  <div class="sec">News Filter</div>
+  <div class="card">
+    <div class="row"><b>MT5 Calendar</b><div class="toggle on" onclick="this.classList.toggle('on')"></div></div>
+    <div class="row"><span>Block before</span><b>10 min</b></div>
+    <div class="row"><span>Block after</span><b>15 min</b></div>
+    <div class="row"><span>High impact only</span><b class="pos">ON</b></div>
+    <div class="row"><span>Close before news</span><b class="pos">ON</b></div>
+  </div>
+
+  <div class="sec">Strategy</div>
+  <div class="card">
+    <div class="row"><b>ML Signal</b><div class="toggle on" onclick="this.classList.toggle('on')"></div></div>
+    <div class="row"><span>Min confidence</span><b id="confVal">72%</b></div>
+    <div class="slider-wrap">
+      <label>Confidence threshold <b id="confLabel">72%</b></label>
+      <input type="range" min="50" max="95" value="72" id="confSlider">
+    </div>
+  </div>
+
+  <div class="sec">Execution</div>
+  <div class="card">
+    <div class="row"><span>Order type</span><b>Limit + IOC</b></div>
+    <div class="row"><span>Slippage cap</span><b>0.3 pips</b></div>
+    <div class="row"><span>Spread filter</span><b>≤ 1.2</b></div>
+    <div class="row"><span>Magic number</span><b>20241120</b></div>
+  </div>
+</aside>
+
+<!-- ================= MAIN ================= -->
+<main class="main">
+
+  <!-- News banner (shown when blocked) -->
+  <div class="news-banner" id="newsBanner">
+    <div class="dot"></div>
+    <div><b>NEWS BLOCK ACTIVE</b> — US CPI (High Impact) · Trading paused until spread normalizes</div>
+    <div class="time" id="newsTime">resumes in 08:42</div>
+  </div>
+
+  <!-- Chart -->
+  <div class="panel" style="flex:1;display:flex;flex-direction:column">
+    <div class="panel-head">
+      <h3>GOLD · M1</h3>
+      <div style="display:flex;gap:6px">
+        <button class="btn" style="padding:4px 10px;border-color:var(--blue);color:var(--blue)">M1</button>
+        <button class="btn" style="padding:4px 10px">M5</button>
+        <button class="btn" style="padding:4px 10px">M15</button>
+      </div>
+    </div>
+    <div class="chart-area">
+      <canvas id="chart"></canvas>
+      <div class="signal-overlay" id="signalOverlay">
+        <div>Signal: <b>WAITING</b></div>
+        <div style="color:var(--muted)">No qualifying setup · confidence below threshold</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Signal grid -->
+  <div class="signals">
+    <div class="sig"><small>RSI (14)</small><b id="sigRsi">—</b><div class="conf" id="sigRsiNote">—</div></div>
+    <div class="sig"><small>ADX (14)</small><b id="sigAdx">—</b><div class="conf" id="sigAdxNote">—</div></div>
+    <div class="sig"><small>VWAP Dev</small><b id="sigVwap">—</b><div class="conf" id="sigVwapNote">—</div></div>
+    <div class="sig"><small>ML Score</small><b id="sigMl" style="color:var(--purple)">—</b><div class="conf" id="sigMlNote">—</div></div>
+  </div>
+</main>
+
+<!-- ================= RIGHT ================= -->
+<aside class="right">
+  <div class="sec">Account Risk</div>
+  <div class="risk-item"><span>Balance</span><b id="rBalance">$5,000.00</b></div>
+  <div class="risk-item"><span>Equity</span><b id="rEquity">$5,000.00</b></div>
+  <div class="risk-item"><span>Day P&L</span><b class="pos" id="rDayPnl">+$0.00</b></div>
+  <div class="risk-item"><span>Win rate</span><b id="rWinRate">—</b></div>
+  <div class="risk-item"><span>Max drawdown</span><b id="rMaxDD">0.00%</b></div>
+
+  <div class="sec">Order Book</div>
+  <div class="ob" id="orderbook"></div>
+
+  <div class="sec">System Health</div>
+  <div class="risk-item"><span>MT5 terminal</span><b class="pos">Connected</b></div>
+  <div class="risk-item"><span>XM server</span><b class="pos">XMGlobal-MT5</b></div>
+  <div class="risk-item"><span>WS latency</span><b id="wsLat">18 ms</b></div>
+  <div class="risk-item"><span>Broker ping</span><b id="brPing">34 ms</b></div>
+  <div class="risk-item"><span>Last heartbeat</span><b id="heartbeat">0s ago</b></div>
+  <div class="risk-item"><span>Engine state</span><b id="engineState" class="neg">STOPPED</b></div>
+</aside>
+
+<!-- ================= LOG ================= -->
+<section class="log">
+  <table>
+    <thead>
+      <tr>
+        <th>Time</th><th>Event</th><th>Symbol</th><th>Side</th>
+        <th>Price</th><th>Size</th><th>P&L</th><th>Reason</th><th>Result</th>
+      </tr>
+    </thead>
+    <tbody id="tradeLog">
+      <tr><td>--:--:--</td><td colspan="8" style="color:var(--muted);text-align:center;padding:16px">
+        Engine not started · Connect backend to populate
+      </td></tr>
+    </tbody>
+  </table>
+</section>
+
+<script src="app.js" defer></script>
+</body>
+</html>

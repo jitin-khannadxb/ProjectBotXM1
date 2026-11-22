@@ -1,0 +1,286 @@
+import asyncio
+from datetime import date, datetime
+from typing import Dict, Optional
+
+from sqlalchemy import select, func, update, insert, delete, case, cast, Date
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from database import AsyncSessionLocal
+from models import DailyState, Trade
+
+
+class RiskManager:
+    """Handles dynamic capital calculations and persists daily trading state
+    using Supabase PostgreSQL so the bot survives crashes."""
+
+    def __init__(self) -> None:
+        self._session: Optional[AsyncSession] = None
+
+    async def _get_session(self) -> AsyncSession:
+        if self._session is None:
+            self._session = AsyncSessionLocal()
+        return self._session
+
+    async def close(self) -> None:
+        if self._session:
+            await self._session.close()
+            self._session = None
+
+    async def _ensure_daily_state(self, session: AsyncSession, today: str) -> DailyState:
+        """Fetch or create today's daily state row."""
+        result = await session.execute(
+            select(DailyState).where(DailyState.date == today)
+        )
+        state = result.scalar_one_or_none()
+        if state is None:
+            state = DailyState(
+                date=today,
+                daily_pnl=0.0,
+                peak_pnl=0.0,
+                consecutive_losses=0,
+                is_locked=False,
+                total_wins=0,
+                total_losses=0,
+            )
+            session.add(state)
+            await session.commit()
+            await session.refresh(state)
+        return state
+
+    def fetch_balance(self) -> float:
+        """Mock balance fetch. Will be connected to the live API later."""
+        return 10000.0
+
+    def calculate_limits(self, balance: float) -> Dict[str, float]:
+        """Return risk-based capital limits derived from the account balance."""
+        target_usd = round(balance * 0.02, 2)
+        max_loss_usd = round(balance * 0.01, 2)
+        risk_per_trade_usd = round(balance * 0.015, 2)
+        sl_pips = 150
+        tp_pips = 300
+
+        lot_size = (risk_per_trade_usd / sl_pips) / 10
+        lot_size = max(0.01, round(lot_size, 2))
+
+        return {
+            "target_usd": target_usd,
+            "max_loss_usd": max_loss_usd,
+            "risk_per_trade_usd": risk_per_trade_usd,
+            "lot_size": lot_size,
+            "sl_pips": sl_pips,
+            "tp_pips": tp_pips,
+        }
+
+    async def get_state(self) -> Dict:
+        """Fetch the current day's state from Supabase. Resets if it is a new day."""
+        today = date.today().isoformat()
+        session = await self._get_session()
+        state = await self._ensure_daily_state(session, today)
+        return {
+            "date": today,
+            "daily_pnl": state.daily_pnl,
+            "peak_pnl": state.peak_pnl,
+            "consecutive_losses": state.consecutive_losses,
+            "is_locked": state.is_locked,
+        }
+
+    async def can_trade(self, balance: float) -> bool:
+        """Determine whether a new trade is allowed based on risk limits."""
+        state = await self.get_state()
+        limits = self.calculate_limits(balance)
+
+        if state["is_locked"]:
+            return False
+
+        if state["daily_pnl"] <= -limits["max_loss_usd"]:
+            return False
+
+        # Trailing lock: peak reached and given back 0.5% of balance
+        if (
+            state["peak_pnl"] >= limits["target_usd"]
+            and state["daily_pnl"] <= (state["peak_pnl"] - (balance * 0.005))
+        ):
+            return False
+
+        return True
+
+    async def record_trade(
+        self,
+        pnl: float,
+        balance: float,
+        symbol: str = "GOLD",
+        side: str = "",
+        price: float = 0.0,
+        size: float = 0.0,
+        result: str = "",
+    ) -> None:
+        """Persist a trade result and update daily state / lock status."""
+        session = await self._get_session()
+        today = date.today().isoformat()
+        now = datetime.now()
+
+        state = await self._ensure_daily_state(session, today)
+        limits = self.calculate_limits(balance)
+
+        new_daily_pnl = round(state.daily_pnl + pnl, 2)
+        new_peak_pnl = max(state.peak_pnl, new_daily_pnl)
+
+        if pnl < 0:
+            new_consecutive = state.consecutive_losses + 1
+        elif pnl > 0:
+            new_consecutive = 0
+        else:
+            new_consecutive = state.consecutive_losses
+
+        is_locked = state.is_locked
+
+        if new_daily_pnl <= -limits["max_loss_usd"]:
+            is_locked = True
+
+        if (
+            new_peak_pnl >= limits["target_usd"]
+            and new_daily_pnl <= (new_peak_pnl - (balance * 0.005))
+        ):
+            is_locked = True
+
+        # Update daily state
+        state.daily_pnl = new_daily_pnl
+        state.peak_pnl = new_peak_pnl
+        state.consecutive_losses = new_consecutive
+        state.is_locked = is_locked
+        if pnl > 0:
+            state.total_wins += 1
+        elif pnl < 0:
+            state.total_losses += 1
+
+        # Insert trade record
+        trade = Trade(
+            trade_id=str(int(now.timestamp() * 1000)),
+            symbol=symbol,
+            side=side,
+            price=price,
+            size=size,
+            sl_price=None,
+            tp_price=None,
+            pnl=round(pnl, 2),
+            result=result if result else ("WIN" if pnl > 0 else "LOSS" if pnl < 0 else "OPEN"),
+            broker_ticket=None,
+            broker_state=None,
+            client_order_id=None,
+            opened_at=now,
+            closed_at=now if result else None,
+        )
+        session.add(trade)
+        await session.commit()
+
+    async def get_daily_report(self, report_date: str | None = None) -> Dict:
+        """Get P&L summary for a specific date (defaults to today)."""
+        if report_date is None:
+            report_date = date.today().isoformat()
+
+        session = await self._get_session()
+
+        result = await session.execute(
+            select(DailyState).where(DailyState.date == report_date)
+        )
+        row = result.scalar_one_or_none()
+
+        if row is None:
+            return {
+                "date": report_date,
+                "daily_pnl": 0.0,
+                "peak_pnl": 0.0,
+                "consecutive_losses": 0,
+                "is_locked": False,
+                "trade_count": 0,
+                "wins": 0,
+                "losses": 0,
+                "gross_pnl": 0.0,
+            }
+
+        trades_result = await session.execute(
+            select(
+                func.count(Trade.id),
+                func.sum(case((Trade.pnl > 0, 1), else_=0)),
+                func.sum(case((Trade.pnl < 0, 1), else_=0)),
+                func.coalesce(func.sum(Trade.pnl), 0),
+            ).where(func.to_char(Trade.opened_at, 'YYYY-MM-DD') == report_date)
+        )
+        trades = trades_result.one()
+
+        return {
+            "date": report_date,
+            "daily_pnl": row.daily_pnl,
+            "peak_pnl": row.peak_pnl,
+            "consecutive_losses": row.consecutive_losses,
+            "is_locked": row.is_locked,
+            "trade_count": trades[0] or 0,
+            "wins": trades[1] or 0,
+            "losses": trades[2] or 0,
+            "gross_pnl": round(trades[3] or 0.0, 2),
+        }
+
+    async def get_hourly_report(
+        self, report_date: str | None = None, hour: int | None = None
+    ) -> Dict:
+        """Get P&L summary for a specific hour (defaults to current hour today)."""
+        if report_date is None:
+            report_date = date.today().isoformat()
+        if hour is None:
+            hour = datetime.now().hour
+
+        session = await self._get_session()
+
+        hour_prefix = f"{report_date} {hour:02d}:"
+        trades_result = await session.execute(
+            select(
+                func.count(Trade.id),
+                func.coalesce(func.sum(Trade.pnl), 0),
+                func.sum(case((Trade.pnl > 0, 1), else_=0)),
+                func.sum(case((Trade.pnl < 0, 1), else_=0)),
+            ).where(func.to_char(Trade.opened_at, 'YYYY-MM-DD HH24:') == hour_prefix)
+        )
+        trades = trades_result.one()
+
+        return {
+            "date": report_date,
+            "hour": hour,
+            "trade_count": trades[0] or 0,
+            "gross_pnl": round(trades[1] or 0.0, 2),
+            "wins": trades[2] or 0,
+            "losses": trades[3] or 0,
+        }
+
+
+if __name__ == "__main__":
+
+    async def main() -> None:
+        rm = RiskManager()
+
+        balance = rm.fetch_balance()
+        print(f"Balance: ${balance}")
+
+        limits = rm.calculate_limits(balance)
+        print(f"Limits: {limits}")
+
+        state = await rm.get_state()
+        print(f"Initial state: {state}")
+
+        print(f"Can trade (fresh): {await rm.can_trade(balance)}")
+
+        # Simulate a winning trade
+        await rm.record_trade(150.0, balance=balance, symbol="EURUSD", side="BUY", price=1.10, size=0.1, result="WIN")
+        state = await rm.get_state()
+        print(f"After +150: {state}")
+        print(f"Can trade: {await rm.can_trade(balance)}")
+
+        # Simulate losses to hit max loss limit
+        await rm.record_trade(-120.0, balance=balance, symbol="EURUSD", side="SELL", price=1.09, size=0.1, result="LOSS")
+        state = await rm.get_state()
+        print(f"After -120: {state}")
+        print(f"Can trade: {await rm.can_trade(balance)}")
+
+        await rm.close()
+        print("Test complete. Database saved to Supabase.")
+
+    asyncio.run(main())
