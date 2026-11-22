@@ -679,6 +679,51 @@ async def v1_get_confidence():
     return {"min_confidence": MIN_CONFIDENCE, "api_version": "v1"}
 
 
+@v1_router.post("/test/order")
+async def v1_test_order(side: str = "BUY"):
+    """Send a test order directly to XM to verify pipeline."""
+    global account_balance, risk_limits, RISK_PARAMS
+    
+    try:
+        quote = await _run_sync(xm.get_live_quote, current_symbol)
+        if not quote:
+            return {"status": "error", "error": "Failed to fetch quote"}
+        
+        price = round((quote["bid"] + quote["ask"]) / 2, 2)
+        pip_size = 1.0 if any(c in current_symbol.upper() for c in ["BTC", "ETH", "XRP", "SOL", "ADA"]) else 0.0001
+        
+        if side.upper() == "BUY":
+            sl_price = round(price - RISK_PARAMS["sl_pips"] * pip_size, 2)
+            tp_price = round(price + RISK_PARAMS["tp_pips"] * pip_size, 2)
+        else:
+            sl_price = round(price + RISK_PARAMS["sl_pips"] * pip_size, 2)
+            tp_price = round(price - RISK_PARAMS["tp_pips"] * pip_size, 2)
+        
+        lot_size = RISK_PARAMS["lot_size"]
+        order_result = await _run_sync(
+            xm.send_order, current_symbol, side.upper(), lot_size, sl_price, tp_price,
+        )
+        
+        if not order_result:
+            return {"status": "error", "error": "No response from XM_API"}
+        
+        order_state = order_result.get("state", 0)
+        return {
+            "status": "success",
+            "state": order_state,
+            "ticket": order_result.get("ticket"),
+            "price": price,
+            "side": side.upper(),
+            "sl": sl_price,
+            "tp": tp_price,
+            "volume": lot_size,
+            "comment": order_result.get("comment", ""),
+            "api_version": "v1",
+        }
+    except Exception as exc:
+        return {"status": "error", "error": str(exc)}
+
+
 @v1_router.get("/risk/params")
 async def v1_get_risk_params():
     return {"params": RISK_PARAMS, "api_version": "v1"}
