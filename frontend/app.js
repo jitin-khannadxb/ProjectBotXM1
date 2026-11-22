@@ -308,8 +308,11 @@ function handleRisk(data) {
   document.getElementById('openPos').textContent = data.open_positions + ' / 2';
 
   // Sidebar risk
-  document.getElementById('lossUsed').textContent = data.daily_loss_used.toFixed(2) + '% / 2.0%';
-  document.getElementById('consecLoss').textContent = data.consecutive_losses + ' / 3';
+  document.getElementById('lossUsed').textContent = data.daily_loss_used.toFixed(2) + '% / ' + document.getElementById('dailyLossLimitVal').textContent + '%';
+  const consecEl = document.getElementById('consecLoss') || document.getElementById('maxConsecutiveLosses');
+  if (consecEl) {
+    consecEl.textContent = data.consecutive_losses + ' / ' + (document.getElementById('maxConsecutiveLosses')?.value || '3');
+  }
   const lossBar = document.getElementById('lossBar');
   if (lossBar) {
     lossBar.style.width = Math.min(100, (data.daily_loss_used / 2.0) * 100) + '%';
