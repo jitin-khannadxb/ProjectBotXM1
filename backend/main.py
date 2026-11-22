@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Dict, List, Set, Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, status
+from fastapi import APIRouter, FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, status
 from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -535,6 +535,114 @@ else:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+# --- API Versioning ---
+v1_router = APIRouter(prefix="/api/v1")
+
+
+@v1_router.get("/health")
+async def v1_health_check():
+    from database import engine
+    from sqlalchemy import text
+    db_status = "unknown"
+    try:
+        async with asyncio.timeout(3):
+            async with engine.begin() as conn:
+                await conn.execute(text("SELECT 1"))
+            db_status = "healthy"
+    except Exception as exc:
+        db_status = f"unhealthy: {type(exc).__name__}"
+    return {
+        "status": "ok" if db_status == "healthy" else "degraded",
+        "database": db_status,
+        "engine_running": is_running,
+        "symbol": active_symbol,
+        "api_version": "v1",
+    }
+
+
+@v1_router.get("/status")
+async def v1_get_status(current_role: str = Depends(get_current_user)):
+    state = await risk.get_state()
+    return {
+        "is_running": is_running,
+        "kill_switch": kill_switch_active,
+        "is_locked": state["is_locked"],
+        "daily_pnl": state["daily_pnl"],
+        "symbol": active_symbol,
+        "user_role": current_role,
+        "api_version": "v1",
+    }
+
+
+@v1_router.post("/engine/start")
+async def v1_start_engine(
+    current_role: str = Depends(require_role("trader")),
+):
+    global is_running, kill_switch_active
+    if kill_switch_active:
+        raise HTTPException(status_code=400, detail="Kill switch is active. Reset required.")
+    is_running = True
+    await manager.broadcast("logs", {
+        "msg": "ENGINE STARTED",
+        "type": "success",
+        "time": datetime.now().strftime("%H:%M:%S"),
+    })
+    return {"status": "started", "api_version": "v1"}
+
+
+@v1_router.post("/engine/kill")
+async def v1_kill_engine(
+    current_role: str = Depends(require_role("trader")),
+):
+    global is_running, kill_switch_active
+    is_running = False
+    kill_switch_active = True
+    await manager.broadcast("logs", {
+        "msg": "KILL SWITCH ACTIVATED",
+        "type": "danger",
+        "time": datetime.now().strftime("%H:%M:%S"),
+    })
+    return {"status": "killed", "api_version": "v1"}
+
+
+@v1_router.post("/engine/reset")
+async def v1_reset_engine(
+    current_role: str = Depends(require_role("admin")),
+):
+    global kill_switch_active
+    kill_switch_active = False
+    await manager.broadcast("logs", {
+        "msg": "Kill switch reset. Ready to start.",
+        "type": "info",
+        "time": datetime.now().strftime("%H:%M:%S"),
+    })
+    return {"status": "reset", "api_version": "v1"}
+
+
+@v1_router.get("/risk")
+async def v1_get_risk(current_role: str = Depends(get_current_user)):
+    return await _build_risk_payload()
+
+
+@v1_router.get("/report/daily")
+async def v1_get_daily_report(
+    report_date: str | None = None,
+    current_role: str = Depends(get_current_user),
+):
+    return await risk.get_daily_report(report_date)
+
+
+@v1_router.get("/report/hourly")
+async def v1_get_hourly_report(
+    report_date: str | None = None,
+    hour: int | None = None,
+    current_role: str = Depends(get_current_user),
+):
+    return await risk.get_hourly_report(report_date, hour)
+
+
+app.include_router(v1_router)
 
 
 @app.get("/metrics")
