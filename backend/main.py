@@ -684,13 +684,15 @@ async def v1_test_order(side: str = "BUY"):
     """Send a test order directly to XM to verify pipeline."""
     global account_balance, risk_limits, RISK_PARAMS
     
+    test_symbol = "BTCUSD"
+    
     try:
-        quote = await _run_sync(xm.get_live_quote, current_symbol)
+        quote = await _run_sync(xm.get_live_quote, test_symbol)
         if not quote:
             return {"status": "error", "error": "Failed to fetch quote"}
         
         price = round((quote["bid"] + quote["ask"]) / 2, 2)
-        pip_size = 1.0 if any(c in current_symbol.upper() for c in ["BTC", "ETH", "XRP", "SOL", "ADA"]) else 0.0001
+        pip_size = 1.0
         
         if side.upper() == "BUY":
             sl_price = round(price - RISK_PARAMS["sl_pips"] * pip_size, 2)
@@ -701,7 +703,7 @@ async def v1_test_order(side: str = "BUY"):
         
         lot_size = RISK_PARAMS["lot_size"]
         order_result = await _run_sync(
-            xm.send_order, current_symbol, side.upper(), lot_size, sl_price, tp_price,
+            xm.send_order, test_symbol, side.upper(), lot_size, sl_price, tp_price,
         )
         
         if not order_result:
