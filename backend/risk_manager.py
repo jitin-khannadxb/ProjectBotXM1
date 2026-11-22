@@ -1,12 +1,12 @@
 import asyncio
 from datetime import date, datetime
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from sqlalchemy import select, func, update, insert, delete, case, cast, Date
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import AsyncSessionLocal
-from models import DailyState, Trade
+from models import DailyState, Trade, Position
 
 
 class RiskManager:
@@ -282,5 +282,92 @@ if __name__ == "__main__":
 
         await rm.close()
         print("Test complete. Database saved to Supabase.")
+
+    async def reconcile_positions(self, xm_client) -> List[Dict]:
+        """Reconcile local positions with broker's open positions."""
+        session = await self._get_session()
+        
+        # Fetch open positions from broker
+        broker_positions = await asyncio.get_event_loop().run_in_executor(
+            None, xm_client.get_open_positions
+        )
+        
+        if not broker_positions:
+            # Mark all local positions as inactive
+            await session.execute(
+                update(Position).where(Position.is_active == True).values(is_active=False)
+            )
+            await session.commit()
+            return []
+        
+        reconciled = []
+        broker_tickets = set()
+        
+        for bp in broker_positions:
+            ticket = bp.get("ticket") or bp.get("id") or bp.get("broker_ticket")
+            if ticket is None:
+                continue
+            broker_tickets.add(int(ticket))
+            
+            symbol = bp.get("symbol", "")
+            side = bp.get("type", bp.get("side", "BUY"))
+            volume = float(bp.get("volume", bp.get("lots", 0)))
+            open_price = float(bp.get("open_price", bp.get("price", 0)))
+            current_price = float(bp.get("current_price", bp.get("price", open_price)))
+            profit = float(bp.get("profit", 0))
+            sl = bp.get("sl")
+            tp = bp.get("tp")
+            
+            # Check if position exists locally
+            result = await session.execute(
+                select(Position).where(Position.broker_ticket == int(ticket))
+            )
+            local_pos = result.scalar_one_or_none()
+            
+            if local_pos:
+                # Update existing position
+                local_pos.current_price = current_price
+                local_pos.profit = profit
+                local_pos.sl = sl
+                local_pos.tp = tp
+                local_pos.is_active = True
+                local_pos.updated_at = datetime.now()
+            else:
+                # Create new position
+                local_pos = Position(
+                    broker_ticket=int(ticket),
+                    symbol=symbol,
+                    side=side,
+                    volume=volume,
+                    open_price=open_price,
+                    current_price=current_price,
+                    sl=sl,
+                    tp=tp,
+                    profit=profit,
+                    is_active=True,
+                )
+                session.add(local_pos)
+            
+            reconciled.append({
+                "broker_ticket": int(ticket),
+                "symbol": symbol,
+                "side": side,
+                "volume": volume,
+                "open_price": open_price,
+                "current_price": current_price,
+                "profit": profit,
+                "is_active": True,
+            })
+        
+        # Mark positions not in broker as inactive
+        await session.execute(
+            update(Position)
+            .where(Position.broker_ticket.not_in(list(broker_tickets)))
+            .where(Position.is_active == True)
+            .values(is_active=False)
+        )
+        
+        await session.commit()
+        return reconciled
 
     asyncio.run(main())

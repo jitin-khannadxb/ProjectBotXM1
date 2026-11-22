@@ -642,6 +642,21 @@ async def v1_get_hourly_report(
     return await risk.get_hourly_report(report_date, hour)
 
 
+@v1_router.post("/positions/reconcile")
+async def v1_reconcile_positions(
+    current_role: str = Depends(require_role("trader")),
+):
+    """Reconcile local positions with broker's open positions."""
+    from xm_api import XM_API
+    broker_api = XM_API(api_key=os.environ.get("MTAPI_KEY", ""), account_id=os.environ.get("MTAPI_ACCOUNT_ID", ""))
+    reconciled = await risk.reconcile_positions(broker_api)
+    return {
+        "reconciled": reconciled,
+        "count": len(reconciled),
+        "api_version": "v1",
+    }
+
+
 app.include_router(v1_router)
 
 
