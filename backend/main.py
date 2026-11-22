@@ -148,6 +148,7 @@ current_price = 2341.28
 DEMO_MODE = True
 active_symbol = SYMBOLS_CONFIG[0] if SYMBOLS_CONFIG else "BTCUSD"
 price_history: List[float] = []
+last_trade_ts: float | None = None
 
 # ---------------------------------------------------------------------------
 # WebSocket connection manager
@@ -217,7 +218,7 @@ async def _run_sync(func, *args):
 
 async def engine_loop():
     """Background loop: risk check -> quote -> signal -> order -> P&L -> broadcast."""
-    global is_running, kill_switch_active, current_price, account_balance, risk_limits
+    global is_running, kill_switch_active, current_price, account_balance, risk_limits, last_trade_ts
 
     logger.info(
         f"Engine loop started | DEMO_MODE={DEMO_MODE} | Symbols: {SYMBOLS_CONFIG}"
@@ -297,43 +298,66 @@ async def engine_loop():
 
             # Track price history for trend strategy
             price_history.append(price)
-            if len(price_history) > 50:
+            if len(price_history) > 100:
                 price_history.pop(0)
 
-            # Simple SMA trend strategy
-            # BUY when price is above short SMA and short SMA above long SMA (uptrend)
-            # SELL when price is below short SMA and short SMA below long SMA (downtrend)
-            confidence = 70.0
-            if len(price_history) >= 20:
-                sma_short = sum(price_history[-10:]) / 10
-                sma_long = sum(price_history[-20:]) / 20
-                trend_strength = abs(sma_short - sma_long) / sma_long * 100
-                confidence = min(95.0, 70.0 + trend_strength * 10)
-                if price > sma_short and sma_short > sma_long:
+            # Trade cooldown: at least 300 seconds between trades
+            now_ts = datetime.now().timestamp()
+            if last_trade_ts and (now_ts - last_trade_ts) < 300:
+                await asyncio.sleep(LOOP_INTERVAL)
+                continue
+
+            # Simple SMA trend strategy with RSI filter
+            # BUY when price > SMA20 > SMA50 (strong uptrend) + RSI oversold bounce
+            # SELL when price < SMA20 < SMA50 (strong downtrend) + RSI overbought bounce
+            confidence = 0.0
+            side = None
+            if len(price_history) >= 50:
+                sma20 = sum(price_history[-20:]) / 20
+                sma50 = sum(price_history[-50:]) / 50
+
+                # Calculate RSI (14-period)
+                changes = [price_history[i] - price_history[i-1] for i in range(-13, 0)]
+                gains = sum(c for c in changes if c > 0)
+                losses = sum(abs(c) for c in changes if c < 0)
+                rs = gains / losses if losses > 0 else 100
+                rsi = 100 - (100 / (1 + rs))
+
+                trend_strength = abs(sma20 - sma50) / sma50 * 100
+
+                if price > sma20 and sma20 > sma50:
+                    # Strong uptrend — BUY on pullback (RSI < 40)
                     side = "BUY"
-                elif price < sma_short and sma_short < sma_long:
+                    confidence = min(98.0, 70.0 + trend_strength * 15 + max(0, 40 - rsi))
+                elif price < sma20 and sma20 < sma50:
+                    # Strong downtrend — SELL on rally (RSI > 60)
                     side = "SELL"
+                    confidence = min(98.0, 70.0 + trend_strength * 15 + max(0, rsi - 60))
                 else:
-                    # No clear trend — skip this cycle
+                    # No clear trend alignment — skip
                     await manager.broadcast("logs", {
-                        "msg": f"No clear trend for {current_symbol} — skipping",
+                        "msg": f"No SMA alignment for {current_symbol} — skipping",
                         "type": "info",
                         "time": trade_time,
                     })
                     await asyncio.sleep(LOOP_INTERVAL)
                     continue
             else:
-                side = "BUY" if price > price_history[0] else "SELL"
+                # Not enough data — skip
+                await asyncio.sleep(LOOP_INTERVAL)
+                continue
 
-            # Only trade when win probability >= 90%
-            if confidence < 90.0:
+            # Only trade when win probability >= 95%
+            if confidence < 95.0:
                 await manager.broadcast("logs", {
-                    "msg": f"Confidence {confidence:.1f}% below 90% — skipping",
+                    "msg": f"Confidence {confidence:.1f}% below 95% — skipping",
                     "type": "info",
                     "time": trade_time,
                 })
                 await asyncio.sleep(LOOP_INTERVAL)
                 continue
+
+            last_trade_ts = now_ts
 
             # Calculate SL / TP prices (absolute prices for the API)
             # Pip size per symbol: GOLD = 0.1, BTCUSD/crypto = 1.0, forex = 0.0001
@@ -620,9 +644,10 @@ async def v1_get_status(current_role: str = Depends(get_current_user)):
 
 @v1_router.post("/engine/start")
 async def v1_start_engine():
-    global is_running, kill_switch_active
+    global is_running, kill_switch_active, last_trade_ts
     kill_switch_active = False
     is_running = True
+    last_trade_ts = None
     await manager.broadcast("logs", {
         "msg": "ENGINE STARTED",
         "type": "success",
