@@ -1,9 +1,12 @@
 import logging
 import os
+import time
 import uuid
 from typing import Any, Dict, List, Optional
 
 import requests
+
+from config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -16,27 +19,65 @@ class XM_API:
     """
 
     def __init__(self, api_key: str, account_id: str) -> None:
-        self.base_url = "https://api.metatraderapi.net"
+        self.base_url = settings.MTAPI_BASE_URL
         self.account_id = account_id
         self.headers = {
             "x-api-key": api_key,
         }
+        self.max_retries = settings.MTAPI_MAX_RETRIES
+        self.retry_backoff = settings.MTAPI_RETRY_BACKOFF
+        self.timeout = settings.MTAPI_TIMEOUT
 
-    def _get(self, endpoint: str, params: Optional[dict] = None) -> Optional[dict]:
-        """Internal helper for GET requests with timeout and error handling."""
+    def _get(
+        self,
+        endpoint: str,
+        params: Optional[dict] = None,
+        retry_on_429: bool = True,
+    ) -> Optional[dict]:
+        """Internal helper for GET requests with timeout, error handling, and retry."""
         url = f"{self.base_url}{endpoint}"
         request_params = {"id": self.account_id}
         if params:
             request_params.update(params)
-        try:
-            response = requests.get(
-                url, headers=self.headers, params=request_params, timeout=15
-            )
-            response.raise_for_status()
-            return response.json()
-        except requests.RequestException as exc:
-            logger.error(f"GET {endpoint} failed: {exc}")
-            return None
+
+        last_exc: Optional[Exception] = None
+        for attempt in range(self.max_retries):
+            try:
+                response = requests.get(
+                    url,
+                    headers=self.headers,
+                    params=request_params,
+                    timeout=self.timeout,
+                )
+
+                if response.status_code == 429:
+                    if attempt < self.max_retries - 1 and retry_on_429:
+                        wait = self.retry_backoff * (2 ** attempt)
+                        logger.warning(
+                            f"GET {endpoint} rate limited (429) — retrying in {wait:.1f}s (attempt {attempt + 1}/{self.max_retries})"
+                        )
+                        time.sleep(wait)
+                        continue
+                    logger.error(
+                        f"GET {endpoint} failed: 429 Too Many Requests after {self.max_retries} attempts"
+                    )
+                    return None
+
+                response.raise_for_status()
+                return response.json()
+
+            except requests.RequestException as exc:
+                last_exc = exc
+                if attempt < self.max_retries - 1:
+                    wait = self.retry_backoff * (2 ** attempt)
+                    logger.warning(
+                        f"GET {endpoint} failed: {exc} — retrying in {wait:.1f}s (attempt {attempt + 1}/{self.max_retries})"
+                    )
+                    time.sleep(wait)
+                    continue
+
+        logger.error(f"GET {endpoint} failed after {self.max_retries} attempts: {last_exc}")
+        return None
 
     def get_account_summary(self) -> Optional[Dict[str, float]]:
         """Fetch account balance and equity from /AccountSummary."""
