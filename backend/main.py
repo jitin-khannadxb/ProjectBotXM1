@@ -1,3 +1,5 @@
+import structlog
+
 import asyncio
 import json
 import logging
@@ -62,12 +64,32 @@ def record_request(method: str, endpoint: str, status_code: int, duration: float
     REQUEST_DURATION.labels(method=method, endpoint=endpoint).observe(duration)
 
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s",
-    datefmt="%H:%M:%S",
+import structlog
+
+structlog.configure(
+    processors=[
+        structlog.stdlib.filter_by_level,
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.PositionalArgumentsFormatter(),
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+        structlog.processors.JSONRenderer(),
+    ],
+    context_class=dict,
+    logger_factory=structlog.stdlib.LoggerFactory(),
+    wrapper_class=structlog.stdlib.BoundLogger,
+    cache_logger_on_first_use=True,
 )
-logger = logging.getLogger("server")
+
+logging.basicConfig(
+    format="%(message)s",
+    stream=None,
+    level=logging.INFO,
+)
+structlog.stdlib.merge_with_stdlib()
+logger = structlog.get_logger("server")
 
 # ---------------------------------------------------------------------------
 # Authentication
