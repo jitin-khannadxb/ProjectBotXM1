@@ -500,9 +500,9 @@ async def _build_risk_payload() -> dict:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global account_balance, risk_limits
+    global account_balance, risk_limits, is_running, kill_switch_active
 
-    # Initialize balance from XM API
+    # Initialize balance from XM API (non-blocking, fallback to default)
     try:
         summary = await _run_sync(xm.get_account_summary)
         if summary:
@@ -514,27 +514,12 @@ async def lifespan(app: FastAPI):
 
     risk_limits = risk.calculate_limits(account_balance)
 
-    # Initialize Redis cache
+    # Initialize Redis cache (non-blocking if unavailable)
     await cache.connect()
 
-    # Auto-start engine: ensure is_running is True and kill_switch is False
+    # Auto-start engine on boot
     is_running = True
     kill_switch_active = False
-
-    # Persist auto-start state to DB
-    session = await risk._get_session()
-    from sqlalchemy import select
-    from models import DailyState
-    today = datetime.now().strftime("%Y-%m-%d")
-    result = await session.execute(select(DailyState).where(DailyState.date == today))
-    state = result.scalar_one_or_none()
-    if state:
-        state.kill_switch_active = False
-        state.updated_at = datetime.now()
-    else:
-        state = DailyState(date=today, kill_switch_active=False)
-        session.add(state)
-    await session.commit()
 
     logger.info(
         f"Server initialized | DEMO_MODE={DEMO_MODE} | Symbols: {SYMBOLS_CONFIG} | "
