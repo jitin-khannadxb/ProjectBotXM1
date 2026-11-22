@@ -68,10 +68,8 @@ import structlog
 
 structlog.configure(
     processors=[
-        structlog.stdlib.filter_by_level,
-        structlog.stdlib.add_logger_name,
         structlog.stdlib.add_log_level,
-        structlog.stdlib.PositionalArgumentsFormatter(),
+        structlog.stdlib.add_logger_name,
         structlog.processors.TimeStamper(fmt="iso"),
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,
@@ -88,7 +86,6 @@ logging.basicConfig(
     stream=None,
     level=logging.INFO,
 )
-structlog.stdlib.merge_with_stdlib()
 logger = structlog.get_logger("server")
 
 # ---------------------------------------------------------------------------
