@@ -149,7 +149,7 @@ DEMO_MODE = True
 active_symbol = SYMBOLS_CONFIG[0] if SYMBOLS_CONFIG else "BTCUSD"
 price_history: List[float] = []
 last_trade_ts: float | None = None
-MIN_CONFIDENCE: float = 85.0
+MIN_CONFIDENCE: float = 50.0
 
 # Dynamic risk parameters (configurable via API)
 RISK_PARAMS: dict = {
@@ -314,9 +314,9 @@ async def engine_loop():
             if len(price_history) > 100:
                 price_history.pop(0)
 
-            # Trade cooldown: at least 300 seconds between trades
+            # Trade cooldown: at least 60 seconds between trades
             now_ts = datetime.now().timestamp()
-            if last_trade_ts and (now_ts - last_trade_ts) < 300:
+            if last_trade_ts and (now_ts - last_trade_ts) < 60:
                 await asyncio.sleep(LOOP_INTERVAL)
                 continue
 
@@ -325,9 +325,9 @@ async def engine_loop():
             # SELL when price < SMA20 < SMA50 (strong downtrend) + RSI overbought bounce
             confidence = 0.0
             side = None
-            if len(price_history) >= 50:
+            if len(price_history) >= 20:
                 sma20 = sum(price_history[-20:]) / 20
-                sma50 = sum(price_history[-50:]) / 50
+                sma50 = sum(price_history[-20:]) / 20 if len(price_history) < 50 else sum(price_history[-50:]) / 50
 
                 # Calculate RSI (14-period)
                 changes = [price_history[i] - price_history[i-1] for i in range(-13, 0)]
@@ -338,27 +338,40 @@ async def engine_loop():
 
                 trend_strength = abs(sma20 - sma50) / sma50 * 100
 
-                if price > sma20 and sma20 > sma50:
-                    # Strong uptrend — BUY on pullback (RSI < 40)
-                    side = "BUY"
-                    confidence = min(98.0, 70.0 + trend_strength * 15 + max(0, 40 - rsi))
-                elif price < sma20 and sma20 < sma50:
-                    # Strong downtrend — SELL on rally (RSI > 60)
-                    side = "SELL"
-                    confidence = min(98.0, 70.0 + trend_strength * 15 + max(0, rsi - 60))
+                if len(price_history) >= 50:
+                    # Full SMA trend strategy
+                    if price > sma20 and sma20 > sma50:
+                        side = "BUY"
+                        confidence = min(98.0, 70.0 + trend_strength * 15 + max(0, 40 - rsi))
+                    elif price < sma20 and sma20 < sma50:
+                        side = "SELL"
+                        confidence = min(98.0, 70.0 + trend_strength * 15 + max(0, rsi - 60))
+                    else:
+                        await manager.broadcast("logs", {
+                            "msg": f"No SMA alignment for {current_symbol} — skipping",
+                            "type": "info",
+                            "time": trade_time,
+                        })
+                        await asyncio.sleep(LOOP_INTERVAL)
+                        continue
                 else:
-                    # No clear trend alignment — skip
-                    await manager.broadcast("logs", {
-                        "msg": f"No SMA alignment for {current_symbol} — skipping",
-                        "type": "info",
-                        "time": trade_time,
-                    })
-                    await asyncio.sleep(LOOP_INTERVAL)
-                    continue
-            else:
-                # Not enough data — skip
-                await asyncio.sleep(LOOP_INTERVAL)
-                continue
+                    # Early phase: simple momentum signal (price vs 20 ticks ago)
+                    prev_price = price_history[-20]
+                    price_change_pct = (price - prev_price) / prev_price * 100
+                    if price_change_pct > 0.05:
+                        side = "BUY"
+                        confidence = min(85.0, 60.0 + abs(price_change_pct) * 50 + max(0, 40 - rsi))
+                    elif price_change_pct < -0.05:
+                        side = "SELL"
+                        confidence = min(85.0, 60.0 + abs(price_change_pct) * 50 + max(0, rsi - 60))
+                    else:
+                        await manager.broadcast("logs", {
+                            "msg": f"Waiting for momentum ({price_change_pct:.2f}%) — skipping",
+                            "type": "info",
+                            "time": trade_time,
+                        })
+                        await asyncio.sleep(LOOP_INTERVAL)
+                        continue
 
             # Only trade when win probability >= MIN_CONFIDENCE%
             if confidence < MIN_CONFIDENCE:
