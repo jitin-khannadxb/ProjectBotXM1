@@ -11,12 +11,13 @@ const API_BASE = (() => {
 })();
 
 const WS_BASE = API_BASE.replace(/^http/, 'ws');
+const API_KEY = window.API_KEY || 'your-api-key-here';
 const CHANNELS = ['prices', 'book', 'signals', 'trades', 'logs', 'risk'];
 const sockets = {};
 
 // ---------- WebSocket setup ----------
 function connectWS(channel) {
-  const ws = new WebSocket(`${WS_BASE}/ws/${channel}`);
+  const ws = new WebSocket(`${WS_BASE}/ws/${channel}?api_key=${encodeURIComponent(API_KEY)}`);
   sockets[channel] = ws;
 
   ws.onopen = () => {
@@ -220,7 +221,10 @@ const engineState = document.getElementById('engineState');
 
 async function startEngine() {
   try {
-    const res = await fetch(`${API_BASE}/api/engine/start`, { method: 'POST' });
+    const res = await fetch(`${API_BASE}/api/v1/engine/start`, {
+      method: 'POST',
+      headers: { 'X-API-Key': API_KEY },
+    });
     if (res.ok) {
       engineState.textContent = 'RUNNING';
       engineState.className = 'pos';
@@ -234,7 +238,10 @@ async function startEngine() {
 
 async function killEngine() {
   try {
-    const res = await fetch(`${API_BASE}/api/engine/kill`, { method: 'POST' });
+    const res = await fetch(`${API_BASE}/api/v1/engine/kill`, {
+      method: 'POST',
+      headers: { 'X-API-Key': API_KEY },
+    });
     if (res.ok) {
       engineState.textContent = 'KILLED';
       engineState.className = 'neg';
