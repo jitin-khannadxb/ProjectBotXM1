@@ -470,6 +470,35 @@ else:
     )
 
 
+# --- Rate Limiting Middleware ---
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request, call_next):
+    # Skip rate limiting for health check and static files
+    if request.url.path in ("/api/health",) or request.url.path.startswith("/static"):
+        return await call_next(request)
+
+    # Get client identifier from API key or IP
+    api_key = request.headers.get(settings.API_KEY_HEADER)
+    client_id = api_key or request.client.host if request.client else "unknown"
+
+    # Check rate limit
+    allowed = await cache.rate_limit_check(
+        f"rate_limit:{client_id}",
+        limit=settings.RATE_LIMIT_PER_MINUTE,
+        window=60,
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Rate limit exceeded. Try again later.",
+        )
+
+    response = await call_next(request)
+    return response
+
+
 # --- REST API ---
 
 
