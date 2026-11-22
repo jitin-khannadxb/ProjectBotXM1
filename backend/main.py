@@ -313,81 +313,14 @@ async def engine_loop():
                 "time": datetime.now().strftime("%H:%M:%S"),
             })
 
-            # Track price history for trend strategy
+            # Track price history
             price_history.append(price)
             if len(price_history) > 100:
                 price_history.pop(0)
 
-            # Trade cooldown: at least 60 seconds between trades
-            now_ts = datetime.now().timestamp()
-            if last_trade_ts and (now_ts - last_trade_ts) < 60:
-                await asyncio.sleep(LOOP_INTERVAL)
-                continue
-
-            # Simple SMA trend strategy with RSI filter
-            # BUY when price > SMA20 > SMA50 (strong uptrend) + RSI oversold bounce
-            # SELL when price < SMA20 < SMA50 (strong downtrend) + RSI overbought bounce
-            confidence = 0.0
-            side = None
-            if len(price_history) >= 20:
-                sma20 = sum(price_history[-20:]) / 20
-                sma50 = sum(price_history[-20:]) / 20 if len(price_history) < 50 else sum(price_history[-50:]) / 50
-
-                # Calculate RSI (14-period)
-                changes = [price_history[i] - price_history[i-1] for i in range(-13, 0)]
-                gains = sum(c for c in changes if c > 0)
-                losses = sum(abs(c) for c in changes if c < 0)
-                rs = gains / losses if losses > 0 else 100
-                rsi = 100 - (100 / (1 + rs))
-
-                trend_strength = abs(sma20 - sma50) / sma50 * 100
-
-                if len(price_history) >= 50:
-                    # Full SMA trend strategy
-                    if price > sma20 and sma20 > sma50:
-                        side = "BUY"
-                        confidence = min(98.0, 70.0 + trend_strength * 15 + max(0, 40 - rsi))
-                    elif price < sma20 and sma20 < sma50:
-                        side = "SELL"
-                        confidence = min(98.0, 70.0 + trend_strength * 15 + max(0, rsi - 60))
-                    else:
-                        await manager.broadcast("logs", {
-                            "msg": f"No SMA alignment for {current_symbol} — skipping",
-                            "type": "info",
-                            "time": trade_time,
-                        })
-                        await asyncio.sleep(LOOP_INTERVAL)
-                        continue
-                else:
-                    # Early phase: simple momentum signal (price vs 20 ticks ago)
-                    prev_price = price_history[-20]
-                    price_change_pct = (price - prev_price) / prev_price * 100
-                    if price_change_pct > 0.05:
-                        side = "BUY"
-                        confidence = min(85.0, 60.0 + abs(price_change_pct) * 50 + max(0, 40 - rsi))
-                    elif price_change_pct < -0.05:
-                        side = "SELL"
-                        confidence = min(85.0, 60.0 + abs(price_change_pct) * 50 + max(0, rsi - 60))
-                    else:
-                        await manager.broadcast("logs", {
-                            "msg": f"Waiting for momentum ({price_change_pct:.2f}%) — skipping",
-                            "type": "info",
-                            "time": trade_time,
-                        })
-                        await asyncio.sleep(LOOP_INTERVAL)
-                        continue
-
-            # Only trade when win probability >= MIN_CONFIDENCE%
-            if confidence < MIN_CONFIDENCE:
-                await manager.broadcast("logs", {
-                    "msg": f"Confidence {confidence:.1f}% below {MIN_CONFIDENCE:.0f}% — skipping",
-                    "type": "info",
-                    "time": trade_time,
-                })
-                await asyncio.sleep(LOOP_INTERVAL)
-                continue
-
-            last_trade_ts = now_ts
+            # Simple test: trade every cycle (alternating BUY/SELL)
+            side = "BUY" if len(price_history) % 2 == 0 else "SELL"
+            confidence = 100.0
 
             # Calculate SL / TP prices (absolute prices for the API)
             # Pip size per symbol: GOLD = 0.1, BTCUSD/crypto = 1.0, forex = 0.0001
