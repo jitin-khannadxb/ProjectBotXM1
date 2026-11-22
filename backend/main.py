@@ -595,9 +595,7 @@ async def v1_get_status(current_role: str = Depends(get_current_user)):
 
 
 @v1_router.post("/engine/start")
-async def v1_start_engine(
-    current_role: str = Depends(require_role("trader")),
-):
+async def v1_start_engine():
     global is_running, kill_switch_active
     if kill_switch_active:
         raise HTTPException(status_code=400, detail="Kill switch is active. Reset required.")
@@ -631,9 +629,7 @@ async def v1_start_engine(
 
 
 @v1_router.post("/engine/kill")
-async def v1_kill_engine(
-    current_role: str = Depends(require_role("trader")),
-):
+async def v1_kill_engine():
     global is_running, kill_switch_active
     is_running = False
     kill_switch_active = True
@@ -665,9 +661,7 @@ async def v1_kill_engine(
 
 
 @v1_router.post("/engine/reset")
-async def v1_reset_engine(
-    current_role: str = Depends(require_role("admin")),
-):
+async def v1_reset_engine():
     global kill_switch_active
     kill_switch_active = False
     await risk.audit_log(
@@ -811,9 +805,7 @@ async def get_status(current_role: str = Depends(get_current_user)):
 
 
 @app.post("/api/engine/start")
-async def start_engine(
-    current_role: str = Depends(require_role("trader")),
-):
+async def start_engine():
     global is_running, kill_switch_active
     if kill_switch_active:
         raise HTTPException(status_code=400, detail="Kill switch is active. Reset required.")
@@ -827,9 +819,7 @@ async def start_engine(
 
 
 @app.post("/api/engine/kill")
-async def kill_engine(
-    current_role: str = Depends(require_role("trader")),
-):
+async def kill_engine():
     global is_running, kill_switch_active
     is_running = False
     kill_switch_active = True
@@ -842,9 +832,7 @@ async def kill_engine(
 
 
 @app.post("/api/engine/reset")
-async def reset_engine(
-    current_role: str = Depends(require_role("admin")),
-):
+async def reset_engine():
     global kill_switch_active
     kill_switch_active = False
     await manager.broadcast("logs", {
