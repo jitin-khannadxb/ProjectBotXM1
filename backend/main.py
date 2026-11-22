@@ -282,8 +282,12 @@ async def engine_loop():
 
             # Fetch live quote
             if DEMO_MODE:
-                noise = (random.random() - 0.5) * 0.5
-                price = round(2340.50 + noise, 2)
+                # Mock price: random walk with volatility for testing
+                if not hasattr(engine_loop, '_mock_price'):
+                    engine_loop._mock_price = 2340.50
+                noise = (random.random() - 0.5) * 10  # ±5 points per tick
+                engine_loop._mock_price = round(engine_loop._mock_price + noise, 2)
+                price = engine_loop._mock_price
                 quote = {"bid": round(price - 0.06, 2), "ask": round(price + 0.06, 2)}
                 current_price = price
             else:
