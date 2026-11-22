@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     MAX_SYMBOLS: int = 5
 
     # --- Symbols ---
-    _symbols_str: str = "EURUSD,GBPUSD,USDJPY,GOLD"
+    _symbols_str: str = "BTCUSD"
 
     @property
     def SYMBOLS(self) -> List[str]:
