@@ -325,6 +325,16 @@ async def engine_loop():
             else:
                 side = "BUY" if price > price_history[0] else "SELL"
 
+            # Only trade when win probability >= 90%
+            if confidence < 90.0:
+                await manager.broadcast("logs", {
+                    "msg": f"Confidence {confidence:.1f}% below 90% — skipping",
+                    "type": "info",
+                    "time": trade_time,
+                })
+                await asyncio.sleep(LOOP_INTERVAL)
+                continue
+
             # Calculate SL / TP prices (absolute prices for the API)
             # Pip size per symbol: GOLD = 0.1, BTCUSD/crypto = 1.0, forex = 0.0001
             if current_symbol == "GOLD":
