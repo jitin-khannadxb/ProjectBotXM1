@@ -1,0 +1,79 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          cd backend
+          pip install -r requirements.txt
+
+      - name: Run linting
+        run: |
+          cd backend
+          python -m py_compile main.py database.py risk_manager.py xm_api.py cache.py schemas.py config.py models.py logger.py engine.py
+          echo "All files compile successfully"
+
+      - name: Check for secrets in code
+        run: |
+          if grep -r "sk_live\|sk_test\|AKIA\|password\s*=\|SECRET_KEY" backend/ --include="*.py" | grep -v "__pycache__" | grep -v "# "; then
+            echo "WARNING: Potential secrets found in code"
+            exit 1
+          fi
+          echo "No secrets found in code"
+
+  build-docker:
+    needs: lint-and-test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: backend/Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cache,mode=max
+
+  deploy-railway:
+    needs: build-docker
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master'
+    steps:
+      - name: Deploy to Railway
+        run: |
+          echo "Deploying to Railway..."
+          echo "Set RAILWAY_TOKEN secret to enable automated deployment"
+          # railway up --token ${{ secrets.RAILWAY_TOKEN }}
