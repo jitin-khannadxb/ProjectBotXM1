@@ -407,15 +407,16 @@ async def engine_loop():
             trade_time = datetime.now().strftime("%H:%M:%S")
 
             # Check if market is open for trading
-            trade_session = await _run_sync(xm.get_trade_session, current_symbol)
-            if not trade_session:
-                await manager.broadcast("logs", {
-                    "msg": f"Market closed for {current_symbol} — waiting for open",
-                    "type": "warn",
-                    "time": trade_time,
-                })
-                await asyncio.sleep(LOOP_INTERVAL)
-                continue
+            if not DEMO_MODE:
+                trade_session = await _run_sync(xm.get_trade_session, current_symbol)
+                if not trade_session:
+                    await manager.broadcast("logs", {
+                        "msg": f"Market closed for {current_symbol} — waiting for open",
+                        "type": "warn",
+                        "time": trade_time,
+                    })
+                    await asyncio.sleep(LOOP_INTERVAL)
+                    continue
 
             # Send order via XM_API (simulated fill in demo mode)
             if DEMO_MODE:
