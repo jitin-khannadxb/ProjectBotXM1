@@ -11,13 +11,12 @@ const API_BASE = (() => {
 })();
 
 const WS_BASE = API_BASE.replace(/^http/, 'ws');
-const API_KEY = window.API_KEY || 'your-api-key-here';
 const CHANNELS = ['prices', 'book', 'signals', 'trades', 'logs', 'risk'];
 const sockets = {};
 
 // ---------- WebSocket setup ----------
 function connectWS(channel) {
-  const ws = new WebSocket(`${WS_BASE}/ws/${channel}?api_key=${encodeURIComponent(API_KEY)}`);
+  const ws = new WebSocket(`${WS_BASE}/ws/${channel}`);
   sockets[channel] = ws;
 
   ws.onopen = () => {

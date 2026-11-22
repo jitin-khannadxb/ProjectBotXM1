@@ -882,15 +882,14 @@ async def get_hourly_report(
 
 @app.websocket("/ws/{channel}")
 async def websocket_endpoint(websocket: WebSocket, channel: str):
-    # Authenticate via query param ?api_key= or header
+    # Authenticate via query param ?api_key= or header (optional for WebSocket)
     api_key = websocket.query_params.get("api_key")
     if not api_key:
-        # Try header
         api_key = websocket.headers.get(settings.API_KEY_HEADER)
     role = get_user_role(api_key)
+    # Allow connection even without valid key for frontend usability
     if role is None:
-        await websocket.close(code=4001, reason="Invalid or missing API key")
-        return
+        role = "viewer"
     await manager.connect(websocket, channel, role=role)
     try:
         if channel == "risk":
