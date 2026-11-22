@@ -20,9 +20,13 @@ class CacheManager:
         if not settings.REDIS_URL:
             logger.warning("REDIS_URL not set — caching disabled")
             return
-        self._redis = redis.from_url(settings.REDIS_URL, decode_responses=True)
-        await self._redis.ping()
-        logger.info("Redis cache connected")
+        try:
+            self._redis = redis.from_url(settings.REDIS_URL, decode_responses=True)
+            await self._redis.ping()
+            logger.info("Redis cache connected")
+        except Exception as exc:
+            logger.warning(f"Redis connection failed — caching disabled: {exc}")
+            self._redis = None
 
     async def disconnect(self) -> None:
         if self._redis:
