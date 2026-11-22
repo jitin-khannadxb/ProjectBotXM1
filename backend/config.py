@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings
-from typing import List, Optional
+from typing import List, Optional, Set
 import urllib.parse
 
 
@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     DATABASE_URL: Optional[str] = None
     SUPABASE_URL: Optional[str] = None
     SUPABASE_DB_PASSWORD: Optional[str] = None
-    SUPABASE_USE_POOLER: bool = True  # Use port 6543 pooled connection
+    SUPABASE_USE_POOLER: bool = True
     DATABASE_POOL_SIZE: int = 20
     DATABASE_MAX_OVERFLOW: int = 40
 
@@ -52,6 +52,25 @@ class Settings(BaseSettings):
     # --- Security ---
     API_KEY_HEADER: str = "X-API-Key"
     RATE_LIMIT_PER_MINUTE: int = 60
+    ADMIN_API_KEYS: str = ""
+    TRADER_API_KEYS: str = ""
+    VIEWER_API_KEYS: str = ""
+
+    @property
+    def admin_keys(self) -> Set[str]:
+        return {k.strip() for k in self.ADMIN_API_KEYS.split(",") if k.strip()}
+
+    @property
+    def trader_keys(self) -> Set[str]:
+        return {k.strip() for k in self.TRADER_API_KEYS.split(",") if k.strip()}
+
+    @property
+    def viewer_keys(self) -> Set[str]:
+        return {k.strip() for k in self.VIEWER_API_KEYS.split(",") if k.strip()}
+
+    @property
+    def all_valid_keys(self) -> Set[str]:
+        return self.admin_keys | self.trader_keys | self.viewer_keys
 
     model_config = {
         "env_file": ".env",
@@ -66,16 +85,13 @@ class Settings(BaseSettings):
             url = self.DATABASE_URL
             if url.startswith("postgresql://"):
                 url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
-            # Supabase: strip "db." prefix (doesn't resolve from external networks)
             if "@db." in url:
                 url = url.replace("@db.", "@")
-            # Supabase requires sslmode=require
             if "supabase.co" in url and "sslmode" not in url:
                 separator = "&" if "?" in url else "?"
                 url += f"{separator}sslmode=require"
             return url
 
-        # Build from Supabase credentials
         if self.SUPABASE_URL and self.SUPABASE_DB_PASSWORD:
             project_ref = self.SUPABASE_URL.replace("https://", "").replace("http://", "").split(".")[0]
             encoded_password = urllib.parse.quote(self.SUPABASE_DB_PASSWORD, safe="")

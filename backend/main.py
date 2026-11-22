@@ -7,13 +7,15 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Dict, List, Set, Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, status
+from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 from risk_manager import RiskManager
 from xm_api import XM_API
 from cache import cache
+from config import settings
 
 logging.basicConfig(
     level=logging.INFO,
@@ -22,7 +24,54 @@ logging.basicConfig(
 )
 logger = logging.getLogger("server")
 
-SYMBOL = "EURUSD"
+# ---------------------------------------------------------------------------
+# Authentication
+# ---------------------------------------------------------------------------
+
+api_key_header = APIKeyHeader(name=settings.API_KEY_HEADER, auto_error=False)
+
+
+def get_user_role(api_key: str | None = None) -> str | None:
+    """Validate API key and return user role."""
+    if not api_key:
+        return None
+    if api_key in settings.admin_keys:
+        return "admin"
+    if api_key in settings.trader_keys:
+        return "trader"
+    if api_key in settings.viewer_keys:
+        return "viewer"
+    return None
+
+
+async def get_current_user(api_key: str | None = Depends(api_key_header)) -> str | None:
+    """Dependency to get authenticated user role."""
+    role = get_user_role(api_key)
+    if role is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing API key",
+            headers={"WWW-Authenticate": "ApiKey"},
+        )
+    return role
+
+
+def require_role(required_role: str):
+    """Decorator factory for role-based access control."""
+    role_hierarchy = {"viewer": 0, "trader": 1, "admin": 2}
+
+    def role_dependency(current_role: str = Depends(get_current_user)) -> str:
+        if role_hierarchy.get(current_role, -1) < role_hierarchy.get(required_role, 0):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Insufficient permissions. Required role: {required_role}",
+            )
+        return current_role
+
+    return role_dependency
+
+
+SYMBOLS_CONFIG: List[str] = settings.SYMBOLS
 LOOP_INTERVAL = 5.0
 TRADE_SIMULATION_DELAY = 5.0
 
@@ -32,7 +81,8 @@ TRADE_SIMULATION_DELAY = 5.0
 is_running = False
 kill_switch_active = False
 current_price = 2341.28
-DEMO_MODE = False  # Set to True for testing without real API keys
+DEMO_MODE = False
+active_symbol = SYMBOLS_CONFIG[0] if SYMBOLS_CONFIG else "EURUSD"
 
 # ---------------------------------------------------------------------------
 # WebSocket connection manager
@@ -49,16 +99,19 @@ class ConnectionManager:
             "book": set(),
             "signals": set(),
         }
+        self.connection_roles: Dict[WebSocket, str] = {}
 
-    async def connect(self, websocket: WebSocket, channel: str):
+    async def connect(self, websocket: WebSocket, channel: str, role: str = "viewer"):
         if channel not in self.active_connections:
             await websocket.close()
             return
         await websocket.accept()
         self.active_connections[channel].add(websocket)
+        self.connection_roles[websocket] = role
 
     def disconnect(self, websocket: WebSocket, channel: str):
         self.active_connections[channel].discard(websocket)
+        self.connection_roles.pop(websocket, None)
 
     async def broadcast(self, channel: str, message: dict):
         if channel not in self.active_connections:
@@ -87,8 +140,6 @@ risk = RiskManager()
 
 account_balance = 10000.0
 risk_limits = risk.calculate_limits(account_balance)
-
-
 # ---------------------------------------------------------------------------
 # Engine loop
 # ---------------------------------------------------------------------------
@@ -104,11 +155,16 @@ async def engine_loop():
     global is_running, kill_switch_active, current_price, account_balance, risk_limits
 
     logger.info(
-        f"Engine loop started | DEMO_MODE={DEMO_MODE} | Symbol: {SYMBOL}"
+        f"Engine loop started | DEMO_MODE={DEMO_MODE} | Symbols: {SYMBOLS_CONFIG}"
     )
+
+    symbol_index = 0
 
     while True:
         try:
+            # Rotate through configured symbols
+            current_symbol = SYMBOLS_CONFIG[symbol_index % len(SYMBOLS_CONFIG)]
+            symbol_index += 1
             # Refresh balance periodically (skip API in demo mode)
             if not DEMO_MODE:
                 summary = await _run_sync(xm.get_account_summary)
@@ -152,10 +208,10 @@ async def engine_loop():
                 quote = {"bid": round(price - 0.06, 2), "ask": round(price + 0.06, 2)}
                 current_price = price
             else:
-                quote = await _run_sync(xm.get_live_quote, SYMBOL)
+                quote = await _run_sync(xm.get_live_quote, current_symbol)
                 if not quote:
                     await manager.broadcast("logs", {
-                        "msg": "Failed to fetch live quote",
+                        "msg": f"Failed to fetch live quote for {current_symbol}",
                         "type": "error",
                         "time": datetime.now().strftime("%H:%M:%S"),
                     })
@@ -168,6 +224,7 @@ async def engine_loop():
             # Broadcast live price
             change = "up" if random.random() > 0.5 else "down"
             await manager.broadcast("prices", {
+                "symbol": current_symbol,
                 "price": price,
                 "change": change,
                 "time": datetime.now().strftime("%H:%M:%S"),
@@ -179,21 +236,22 @@ async def engine_loop():
 
             # Calculate SL / TP prices (absolute prices for the API)
             # Pip size per symbol: GOLD = 0.1, EURUSD = 0.0001
-            pip_size = 0.1 if SYMBOL == "GOLD" else 0.0001
+            pip_size = 0.1 if current_symbol == "GOLD" else 0.0001
             if side == "BUY":
                 sl_price = round(price - risk_limits["sl_pips"] * pip_size, 2)
                 tp_price = round(price + risk_limits["tp_pips"] * pip_size, 2)
             else:
                 sl_price = round(price + risk_limits["sl_pips"] * pip_size, 2)
-                tp_price = round(price - risk_limits["tp_pips"] * pip_size, 2)
+                tp_price = round(price - risk_limits["sl_pips"] * pip_size, 2)
 
             lot_size = risk_limits["lot_size"]
             logger.info(
-                f"SIGNAL — {SYMBOL} {side} {lot_size} lots @ {price:.2f} | SL: {sl_price:.2f} | TP: {tp_price:.2f}"
+                f"SIGNAL — {current_symbol} {side} {lot_size} lots @ {price:.2f} | SL: {sl_price:.2f} | TP: {tp_price:.2f}"
             )
 
             # Broadcast signal to frontend signal overlay
             await manager.broadcast("signals", {
+                "symbol": current_symbol,
                 "signal": side,
                 "price": round(price, 2),
                 "sl": sl_price,
@@ -206,10 +264,10 @@ async def engine_loop():
             trade_time = datetime.now().strftime("%H:%M:%S")
 
             # Check if market is open for trading
-            trade_session = await _run_sync(xm.get_trade_session, SYMBOL)
+            trade_session = await _run_sync(xm.get_trade_session, current_symbol)
             if not trade_session:
                 await manager.broadcast("logs", {
-                    "msg": f"Market closed for {SYMBOL} — waiting for open",
+                    "msg": f"Market closed for {current_symbol} — waiting for open",
                     "type": "warn",
                     "time": trade_time,
                 })
@@ -221,7 +279,7 @@ async def engine_loop():
                 order_result = {
                     "status": "filled",
                     "order_id": f"DEMO_{trade_id}",
-                    "symbol": SYMBOL,
+                    "symbol": current_symbol,
                     "side": side,
                     "volume": lot_size,
                     "price": price,
@@ -229,10 +287,10 @@ async def engine_loop():
                     "ticket": trade_id,
                     "state": 10009,
                 }
-                logger.info(f"[DEMO] Simulated order fill: {SYMBOL} {side} {lot_size} lots @ {price:.2f}")
+                logger.info(f"[DEMO] Simulated order fill: {current_symbol} {side} {lot_size} lots @ {price:.2f}")
             else:
                 order_result = await _run_sync(
-                    xm.send_order, SYMBOL, side, lot_size, sl_price, tp_price,
+                    xm.send_order, current_symbol, side, lot_size, sl_price, tp_price,
                 )
 
             if not order_result:
@@ -261,7 +319,7 @@ async def engine_loop():
             await manager.broadcast("trades", {
                 "id": trade_id,
                 "time": trade_time,
-                "symbol": SYMBOL,
+                "symbol": current_symbol,
                 "side": side,
                 "price": price,
                 "size": lot_size,
@@ -269,7 +327,7 @@ async def engine_loop():
                 "result": "OPEN",
             })
             await manager.broadcast("logs", {
-                "msg": f"ORDER ACCEPTED — {SYMBOL} {side} {lot_size} lots @ {price:.2f}",
+                "msg": f"ORDER ACCEPTED — {current_symbol} {side} {lot_size} lots @ {price:.2f}",
                 "type": "success",
                 "time": trade_time,
             })
@@ -295,13 +353,13 @@ async def engine_loop():
                     result_str = "UNKNOWN"
                     logger.error(f"CLOSE FAILED — ticket {order_ticket}")
 
-            await risk.record_trade(pnl, balance=account_balance, symbol=SYMBOL, side=side, price=price, size=lot_size, result=result_str)
+            await risk.record_trade(pnl, balance=account_balance, symbol=current_symbol, side=side, price=price, size=lot_size, result=result_str)
 
             # Broadcast trade close
             await manager.broadcast("trades", {
                 "id": order_ticket,
                 "time": datetime.now().strftime("%H:%M:%S"),
-                "symbol": SYMBOL,
+                "symbol": current_symbol,
                 "side": side,
                 "price": price,
                 "size": lot_size,
@@ -314,7 +372,7 @@ async def engine_loop():
 
             # Broadcast log
             await manager.broadcast("logs", {
-                "msg": f"CLOSED — {SYMBOL} {result_str} | P&L: ${pnl:,.2f}",
+                "msg": f"CLOSED — {current_symbol} {result_str} | P&L: ${pnl:,.2f}",
                 "type": "success" if pnl > 0 else "danger",
                 "time": datetime.now().strftime("%H:%M:%S"),
             })
@@ -375,7 +433,7 @@ async def lifespan(app: FastAPI):
     await cache.connect()
 
     logger.info(
-        f"Server initialized | DEMO_MODE={DEMO_MODE} | Symbol: {SYMBOL} | "
+        f"Server initialized | DEMO_MODE={DEMO_MODE} | Symbols: {SYMBOLS_CONFIG} | "
         f"Balance: ${account_balance:,.2f} | Target: ${risk_limits['target_usd']:,.2f} | "
         f"Max Loss: ${risk_limits['max_loss_usd']:,.2f} | Lot Size: {risk_limits['lot_size']}"
     )
@@ -415,18 +473,6 @@ else:
 # --- REST API ---
 
 
-@app.get("/api/status")
-async def get_status():
-    state = await risk.get_state()
-    return {
-        "is_running": is_running,
-        "kill_switch": kill_switch_active,
-        "is_locked": state["is_locked"],
-        "daily_pnl": state["daily_pnl"],
-        "symbol": SYMBOL,
-    }
-
-
 @app.get("/api/health")
 async def health_check():
     from database import engine
@@ -443,12 +489,27 @@ async def health_check():
         "status": "ok" if db_status == "healthy" else "degraded",
         "database": db_status,
         "engine_running": is_running,
-        "symbol": SYMBOL,
+        "symbol": active_symbol,
+    }
+
+
+@app.get("/api/status")
+async def get_status(current_role: str = Depends(get_current_user)):
+    state = await risk.get_state()
+    return {
+        "is_running": is_running,
+        "kill_switch": kill_switch_active,
+        "is_locked": state["is_locked"],
+        "daily_pnl": state["daily_pnl"],
+        "symbol": active_symbol,
+        "user_role": current_role,
     }
 
 
 @app.post("/api/engine/start")
-async def start_engine():
+async def start_engine(
+    current_role: str = Depends(require_role("trader")),
+):
     global is_running, kill_switch_active
     if kill_switch_active:
         raise HTTPException(status_code=400, detail="Kill switch is active. Reset required.")
@@ -462,7 +523,9 @@ async def start_engine():
 
 
 @app.post("/api/engine/kill")
-async def kill_engine():
+async def kill_engine(
+    current_role: str = Depends(require_role("trader")),
+):
     global is_running, kill_switch_active
     is_running = False
     kill_switch_active = True
@@ -475,7 +538,9 @@ async def kill_engine():
 
 
 @app.post("/api/engine/reset")
-async def reset_engine():
+async def reset_engine(
+    current_role: str = Depends(require_role("admin")),
+):
     global kill_switch_active
     kill_switch_active = False
     await manager.broadcast("logs", {
@@ -487,17 +552,24 @@ async def reset_engine():
 
 
 @app.get("/api/risk")
-async def get_risk():
+async def get_risk(current_role: str = Depends(get_current_user)):
     return await _build_risk_payload()
 
 
 @app.get("/api/report/daily")
-async def get_daily_report(report_date: str | None = None):
+async def get_daily_report(
+    report_date: str | None = None,
+    current_role: str = Depends(get_current_user),
+):
     return await risk.get_daily_report(report_date)
 
 
 @app.get("/api/report/hourly")
-async def get_hourly_report(report_date: str | None = None, hour: int | None = None):
+async def get_hourly_report(
+    report_date: str | None = None,
+    hour: int | None = None,
+    current_role: str = Depends(get_current_user),
+):
     return await risk.get_hourly_report(report_date, hour)
 
 
@@ -506,9 +578,17 @@ async def get_hourly_report(report_date: str | None = None, hour: int | None = N
 
 @app.websocket("/ws/{channel}")
 async def websocket_endpoint(websocket: WebSocket, channel: str):
-    await manager.connect(websocket, channel)
+    # Authenticate via query param ?api_key= or header
+    api_key = websocket.query_params.get("api_key")
+    if not api_key:
+        # Try header
+        api_key = websocket.headers.get(settings.API_KEY_HEADER)
+    role = get_user_role(api_key)
+    if role is None:
+        await websocket.close(code=4001, reason="Invalid or missing API key")
+        return
+    await manager.connect(websocket, channel, role=role)
     try:
-        # Send initial state immediately
         if channel == "risk":
             await websocket.send_text(json.dumps(await _build_risk_payload()))
         while True:
