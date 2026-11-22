@@ -149,6 +149,7 @@ DEMO_MODE = True
 active_symbol = SYMBOLS_CONFIG[0] if SYMBOLS_CONFIG else "BTCUSD"
 price_history: List[float] = []
 last_trade_ts: float | None = None
+MIN_CONFIDENCE: float = 95.0
 
 # ---------------------------------------------------------------------------
 # WebSocket connection manager
@@ -218,7 +219,7 @@ async def _run_sync(func, *args):
 
 async def engine_loop():
     """Background loop: risk check -> quote -> signal -> order -> P&L -> broadcast."""
-    global is_running, kill_switch_active, current_price, account_balance, risk_limits, last_trade_ts
+    global is_running, kill_switch_active, current_price, account_balance, risk_limits, last_trade_ts, MIN_CONFIDENCE
 
     logger.info(
         f"Engine loop started | DEMO_MODE={DEMO_MODE} | Symbols: {SYMBOLS_CONFIG}"
@@ -347,10 +348,10 @@ async def engine_loop():
                 await asyncio.sleep(LOOP_INTERVAL)
                 continue
 
-            # Only trade when win probability >= 95%
-            if confidence < 95.0:
+            # Only trade when win probability >= MIN_CONFIDENCE%
+            if confidence < MIN_CONFIDENCE:
                 await manager.broadcast("logs", {
-                    "msg": f"Confidence {confidence:.1f}% below 95% — skipping",
+                    "msg": f"Confidence {confidence:.1f}% below {MIN_CONFIDENCE:.0f}% — skipping",
                     "type": "info",
                     "time": trade_time,
                 })
@@ -679,6 +680,26 @@ async def v1_reset_engine():
         "time": datetime.now().strftime("%H:%M:%S"),
     })
     return {"status": "reset", "api_version": "v1"}
+
+
+@v1_router.post("/strategy/confidence")
+async def v1_set_confidence(payload: dict):
+    global MIN_CONFIDENCE
+    new_conf = float(payload.get("confidence", 95.0))
+    if new_conf < 50 or new_conf > 100:
+        raise HTTPException(status_code=400, detail="Confidence must be between 50 and 100")
+    MIN_CONFIDENCE = new_conf
+    await manager.broadcast("logs", {
+        "msg": f"Min confidence updated to {MIN_CONFIDENCE:.0f}%",
+        "type": "info",
+        "time": datetime.now().strftime("%H:%M:%S"),
+    })
+    return {"status": "updated", "min_confidence": MIN_CONFIDENCE, "api_version": "v1"}
+
+
+@v1_router.get("/strategy/confidence")
+async def v1_get_confidence():
+    return {"min_confidence": MIN_CONFIDENCE, "api_version": "v1"}
 
 
 @v1_router.get("/risk")

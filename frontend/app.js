@@ -364,15 +364,41 @@ btnEngine.addEventListener('click', startEngine);
 btnKill.addEventListener('click', killEngine);
 btnKill.disabled = true;
 
-// ---------- Confidence slider (local UI only) ----------
+// ---------- Confidence slider (controls backend strategy) ----------
 const confSlider = document.getElementById('confSlider');
 const confLabel = document.getElementById('confLabel');
 const confVal = document.getElementById('confVal');
+let confDebounce = null;
 confSlider.addEventListener('input', (e) => {
-  confLabel.textContent = e.target.value + '%';
-  confVal.textContent = e.target.value + '%';
+  const val = e.target.value;
+  confLabel.textContent = val + '%';
+  confVal.textContent = val + '%';
+  clearTimeout(confDebounce);
+  confDebounce = setTimeout(() => {
+    fetch(`${API_BASE}/api/v1/strategy/confidence`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confidence: parseFloat(val) }),
+    }).then(r => r.json()).then(d => {
+      console.log('Confidence updated:', d);
+    }).catch(err => console.error('Confidence update failed:', err));
+  }, 500);
 });
 
 // ---------- Initialize ----------
+async function initConfidence() {
+  try {
+    const r = await fetch(`${API_BASE}/api/v1/strategy/confidence`);
+    const d = await r.json();
+    const val = d.min_confidence || 95;
+    confSlider.value = val;
+    confLabel.textContent = val + '%';
+    confVal.textContent = val + '%';
+  } catch (e) {
+    console.error('Failed to fetch confidence:', e);
+  }
+}
+
 initChart();
+initConfidence();
 initWS();
