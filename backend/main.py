@@ -384,15 +384,6 @@ async def engine_loop():
 
             order_ticket = order_result.get("ticket", trade_id)
 
-            # Audit log trade open
-            await risk.audit_log(
-                event_type="ORDER_PLACED",
-                message=f"{current_symbol} {side} {lot_size} lots @ {price:.2f}",
-                symbol=current_symbol,
-                level="INFO",
-                meta_data=f'{{"order_ticket": {order_ticket}, "sl": {sl_price}, "tp": {tp_price}}}',
-            )
-
             # Broadcast trade open
             await manager.broadcast("trades", {
                 "id": trade_id,
@@ -432,15 +423,6 @@ async def engine_loop():
                     logger.error(f"CLOSE FAILED — ticket {order_ticket}")
 
             await risk.record_trade(pnl, balance=account_balance, symbol=current_symbol, side=side, price=price, size=lot_size, result=result_str)
-
-            # Audit log trade close
-            await risk.audit_log(
-                event_type="TRADE_CLOSED",
-                message=f"{current_symbol} {side} closed: P&L ${pnl:,.2f} ({result_str})",
-                symbol=current_symbol,
-                level="INFO" if pnl > 0 else "WARN",
-                meta_data=f'{{"pnl": {pnl}, "result": "{result_str}"}}',
-            )
 
             # Broadcast trade close
             await manager.broadcast("trades", {
