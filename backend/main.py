@@ -145,7 +145,7 @@ TRADE_SIMULATION_DELAY = 5.0
 is_running = True
 kill_switch_active = False
 current_price = 2341.28
-DEMO_MODE = True
+DEMO_MODE = False
 active_symbol = SYMBOLS_CONFIG[0] if SYMBOLS_CONFIG else "BTCUSD"
 price_history: List[float] = []
 
