@@ -396,6 +396,7 @@ async function initConfidence() {
     confVal.textContent = val + '%';
   } catch (e) {
     console.error('Failed to fetch confidence:', e);
+  }
 }
 
 // ---------- Risk Params (dynamic) ----------
