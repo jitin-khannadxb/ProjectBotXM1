@@ -674,12 +674,37 @@ async def v1_set_confidence(payload: dict):
     return {"status": "updated", "min_confidence": MIN_CONFIDENCE, "api_version": "v1"}
 
 
-@v1_router.get("/strategy/confidence")
-async def v1_get_confidence():
-    return {"min_confidence": MIN_CONFIDENCE, "api_version": "v1"}
-
-
-@v1_router.post("/test/order")
+@v1_router.get("/debug/engine")
+async def v1_debug_engine():
+    """Debug endpoint to check engine state and why trades aren't executing."""
+    global account_balance, risk_limits, RISK_PARAMS, is_running, kill_switch_active, last_trade_ts, price_history
+    
+    try:
+        state = await risk.get_state()
+        can_trade_result = await risk.can_trade(account_balance, RISK_PARAMS)
+        
+        quote = await _run_sync(xm.get_live_quote, "BTCUSD")
+        price = round((quote["bid"] + quote["ask"]) / 2, 2) if quote else None
+        
+        trade_session = await _run_sync(xm.get_trade_session, "BTCUSD")
+        
+        return {
+            "is_running": is_running,
+            "kill_switch_active": kill_switch_active,
+            "last_trade_ts": last_trade_ts,
+            "time_since_last_trade": None if not last_trade_ts else datetime.now().timestamp() - last_trade_ts,
+            "price_history_len": len(price_history),
+            "current_price": price,
+            "risk_state": state,
+            "can_trade": can_trade_result,
+            "trade_session_open": trade_session,
+            "risk_limits": risk_limits,
+            "RISK_PARAMS": RISK_PARAMS,
+            "DEMO_MODE": DEMO_MODE,
+            "api_version": "v1",
+        }
+    except Exception as exc:
+        return {"status": "error", "error": str(exc)}
 async def v1_test_order(side: str = "BUY"):
     """Send a test order directly to XM to verify pipeline."""
     global account_balance, risk_limits, RISK_PARAMS
