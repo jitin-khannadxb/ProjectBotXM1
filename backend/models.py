@@ -40,6 +40,7 @@ class DailyState(Base):
     peak_pnl: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
     consecutive_losses: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     is_locked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    kill_switch_active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     total_wins: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     total_losses: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
