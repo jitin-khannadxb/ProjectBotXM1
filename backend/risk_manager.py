@@ -6,7 +6,7 @@ from sqlalchemy import select, func, update, insert, delete, case, cast, Date
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import AsyncSessionLocal
-from models import DailyState, Trade, Position
+from models import DailyState, Trade, Position, AuditLog
 
 
 class RiskManager:
@@ -369,5 +369,59 @@ if __name__ == "__main__":
         
         await session.commit()
         return reconciled
+
+    async def audit_log(
+        self,
+        event_type: str,
+        message: str,
+        symbol: str | None = None,
+        level: str = "INFO",
+        meta_data: str | None = None,
+    ) -> None:
+        """Write an audit log entry."""
+        session = await self._get_session()
+        entry = AuditLog(
+            event_type=event_type,
+            message=message,
+            symbol=symbol,
+            level=level,
+            meta_data=meta_data,
+        )
+        session.add(entry)
+        await session.commit()
+
+
+if __name__ == "__main__":
+
+    async def main() -> None:
+        rm = RiskManager()
+
+        balance = rm.fetch_balance()
+        print(f"Balance: ${balance}")
+
+        limits = rm.calculate_limits(balance)
+        print(f"Limits: {limits}")
+
+        state = await rm.get_state()
+        print(f"Initial state: {state}")
+
+        print(f"Can trade (fresh): {await rm.can_trade(balance)}")
+
+        # Simulate a winning trade
+        await rm.record_trade(150.0, balance=balance, symbol="EURUSD", side="BUY", price=1.10, size=0.1, result="WIN")
+        await rm.audit_log("TRADE_EXECUTED", "Winning trade recorded", symbol="EURUSD", level="INFO", meta_data='{"pnl": 150.0}')
+        state = await rm.get_state()
+        print(f"After +150: {state}")
+        print(f"Can trade: {await rm.can_trade(balance)}")
+
+        # Simulate losses to hit max loss limit
+        await rm.record_trade(-120.0, balance=balance, symbol="EURUSD", side="SELL", price=1.09, size=0.1, result="LOSS")
+        await rm.audit_log("TRADE_EXECUTED", "Losing trade recorded", symbol="EURUSD", level="WARN", meta_data='{"pnl": -120.0}')
+        state = await rm.get_state()
+        print(f"After -120: {state}")
+        print(f"Can trade: {await rm.can_trade(balance)}")
+
+        await rm.close()
+        print("Test complete. Database saved to Supabase.")
 
     asyncio.run(main())

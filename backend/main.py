@@ -382,6 +382,15 @@ async def engine_loop():
 
             order_ticket = order_result.get("ticket", trade_id)
 
+            # Audit log trade open
+            await risk.audit_log(
+                event_type="ORDER_PLACED",
+                message=f"{current_symbol} {side} {lot_size} lots @ {price:.2f}",
+                symbol=current_symbol,
+                level="INFO",
+                meta_data=f'{{"order_ticket": {order_ticket}, "sl": {sl_price}, "tp": {tp_price}}}',
+            )
+
             # Broadcast trade open
             await manager.broadcast("trades", {
                 "id": trade_id,
@@ -421,6 +430,15 @@ async def engine_loop():
                     logger.error(f"CLOSE FAILED — ticket {order_ticket}")
 
             await risk.record_trade(pnl, balance=account_balance, symbol=current_symbol, side=side, price=price, size=lot_size, result=result_str)
+
+            # Audit log trade close
+            await risk.audit_log(
+                event_type="TRADE_CLOSED",
+                message=f"{current_symbol} {side} closed: P&L ${pnl:,.2f} ({result_str})",
+                symbol=current_symbol,
+                level="INFO" if pnl > 0 else "WARN",
+                meta_data=f'{{"pnl": {pnl}, "result": "{result_str}"}}',
+            )
 
             # Broadcast trade close
             await manager.broadcast("trades", {
@@ -583,6 +601,11 @@ async def v1_start_engine(
     if kill_switch_active:
         raise HTTPException(status_code=400, detail="Kill switch is active. Reset required.")
     is_running = True
+    await risk.audit_log(
+        event_type="ENGINE_START",
+        message="Trading engine started",
+        level="INFO",
+    )
     await manager.broadcast("logs", {
         "msg": "ENGINE STARTED",
         "type": "success",
@@ -598,6 +621,11 @@ async def v1_kill_engine(
     global is_running, kill_switch_active
     is_running = False
     kill_switch_active = True
+    await risk.audit_log(
+        event_type="KILL_SWITCH_ACTIVATED",
+        message="Kill switch activated by user",
+        level="WARN",
+    )
     await manager.broadcast("logs", {
         "msg": "KILL SWITCH ACTIVATED",
         "type": "danger",
@@ -612,6 +640,11 @@ async def v1_reset_engine(
 ):
     global kill_switch_active
     kill_switch_active = False
+    await risk.audit_log(
+        event_type="KILL_SWITCH_RESET",
+        message="Kill switch reset by admin",
+        level="INFO",
+    )
     await manager.broadcast("logs", {
         "msg": "Kill switch reset. Ready to start.",
         "type": "info",
