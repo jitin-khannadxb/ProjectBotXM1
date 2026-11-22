@@ -410,6 +410,7 @@ async def engine_loop():
             order_ticket = order_result.get("ticket", trade_id)
 
             # Broadcast trade open
+            TRADE_COUNT.labels(symbol=current_symbol, side=side, result="OPEN").inc()
             await manager.broadcast("trades", {
                 "id": trade_id,
                 "time": trade_time,
@@ -448,6 +449,9 @@ async def engine_loop():
                     logger.error(f"CLOSE FAILED — ticket {order_ticket}")
 
             await risk.record_trade(pnl, balance=account_balance, symbol=current_symbol, side=side, price=price, size=lot_size, result=result_str)
+
+            TRADE_COUNT.labels(symbol=current_symbol, side=side, result=result_str).inc()
+            DAILY_PNL.set(state["daily_pnl"])
 
             # Broadcast trade close
             await manager.broadcast("trades", {
@@ -612,6 +616,7 @@ async def v1_start_engine():
     kill_switch_active = False
     is_running = True
     last_trade_ts = None
+    ENGINE_STATE.set(1)
     await manager.broadcast("logs", {
         "msg": "ENGINE STARTED",
         "type": "success",
@@ -625,6 +630,8 @@ async def v1_kill_engine():
     global is_running, kill_switch_active
     is_running = False
     kill_switch_active = True
+    ENGINE_STATE.set(0)
+    KILL_SWITCH_STATE.set(1)
     await manager.broadcast("logs", {
         "msg": "KILL SWITCH ACTIVATED",
         "type": "danger",
@@ -637,6 +644,7 @@ async def v1_kill_engine():
 async def v1_reset_engine():
     global kill_switch_active
     kill_switch_active = False
+    KILL_SWITCH_STATE.set(0)
     await manager.broadcast("logs", {
         "msg": "Kill switch reset. Ready to start.",
         "type": "info",
