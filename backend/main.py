@@ -606,20 +606,6 @@ async def v1_start_engine():
         message="Trading engine started",
         level="INFO",
     )
-    # Persist kill_switch state to DB
-    session = await risk._get_session()
-    from sqlalchemy import select
-    from models import DailyState
-    today = datetime.now().strftime("%Y-%m-%d")
-    result = await session.execute(select(DailyState).where(DailyState.date == today))
-    state = result.scalar_one_or_none()
-    if state:
-        state.kill_switch_active = False
-        state.updated_at = datetime.now()
-    else:
-        state = DailyState(date=today, kill_switch_active=False)
-        session.add(state)
-    await session.commit()
     await manager.broadcast("logs", {
         "msg": "ENGINE STARTED",
         "type": "success",
@@ -638,20 +624,6 @@ async def v1_kill_engine():
         message="Kill switch activated by user",
         level="WARN",
     )
-    # Persist kill_switch state to DB
-    session = await risk._get_session()
-    from sqlalchemy import select
-    from models import DailyState
-    today = datetime.now().strftime("%Y-%m-%d")
-    result = await session.execute(select(DailyState).where(DailyState.date == today))
-    state = result.scalar_one_or_none()
-    if state:
-        state.kill_switch_active = True
-        state.updated_at = datetime.now()
-    else:
-        state = DailyState(date=today, kill_switch_active=True)
-        session.add(state)
-    await session.commit()
     await manager.broadcast("logs", {
         "msg": "KILL SWITCH ACTIVATED",
         "type": "danger",
@@ -669,20 +641,6 @@ async def v1_reset_engine():
         message="Kill switch reset by admin",
         level="INFO",
     )
-    # Persist kill_switch state to DB
-    session = await risk._get_session()
-    from sqlalchemy import select
-    from models import DailyState
-    today = datetime.now().strftime("%Y-%m-%d")
-    result = await session.execute(select(DailyState).where(DailyState.date == today))
-    state = result.scalar_one_or_none()
-    if state:
-        state.kill_switch_active = False
-        state.updated_at = datetime.now()
-    else:
-        state = DailyState(date=today, kill_switch_active=False)
-        session.add(state)
-    await session.commit()
     await manager.broadcast("logs", {
         "msg": "Kill switch reset. Ready to start.",
         "type": "info",
