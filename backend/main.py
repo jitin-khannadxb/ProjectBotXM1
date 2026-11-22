@@ -145,8 +145,9 @@ TRADE_SIMULATION_DELAY = 5.0
 is_running = True
 kill_switch_active = False
 current_price = 2341.28
-DEMO_MODE = False
+DEMO_MODE = True
 active_symbol = SYMBOLS_CONFIG[0] if SYMBOLS_CONFIG else "BTCUSD"
+price_history: List[float] = []
 
 # ---------------------------------------------------------------------------
 # WebSocket connection manager
@@ -294,9 +295,35 @@ async def engine_loop():
                 "time": datetime.now().strftime("%H:%M:%S"),
             })
 
-            # Mock signal: BUY if price cents even, SELL if odd
-            price_cents = int(round(price * 100)) % 100
-            side = "BUY" if price_cents % 2 == 0 else "SELL"
+            # Track price history for trend strategy
+            price_history.append(price)
+            if len(price_history) > 50:
+                price_history.pop(0)
+
+            # Simple SMA trend strategy
+            # BUY when price is above short SMA and short SMA above long SMA (uptrend)
+            # SELL when price is below short SMA and short SMA below long SMA (downtrend)
+            confidence = 70.0
+            if len(price_history) >= 20:
+                sma_short = sum(price_history[-10:]) / 10
+                sma_long = sum(price_history[-20:]) / 20
+                trend_strength = abs(sma_short - sma_long) / sma_long * 100
+                confidence = min(95.0, 70.0 + trend_strength * 10)
+                if price > sma_short and sma_short > sma_long:
+                    side = "BUY"
+                elif price < sma_short and sma_short < sma_long:
+                    side = "SELL"
+                else:
+                    # No clear trend — skip this cycle
+                    await manager.broadcast("logs", {
+                        "msg": f"No clear trend for {current_symbol} — skipping",
+                        "type": "info",
+                        "time": trade_time,
+                    })
+                    await asyncio.sleep(LOOP_INTERVAL)
+                    continue
+            else:
+                side = "BUY" if price > price_history[0] else "SELL"
 
             # Calculate SL / TP prices (absolute prices for the API)
             # Pip size per symbol: GOLD = 0.1, BTCUSD/crypto = 1.0, forex = 0.0001
@@ -325,7 +352,7 @@ async def engine_loop():
                 "price": round(price, 2),
                 "sl": sl_price,
                 "tp": tp_price,
-                "confidence": round(random.uniform(70, 95), 1),
+                "confidence": round(confidence, 1),
                 "time": datetime.now().strftime("%H:%M:%S"),
             })
 
