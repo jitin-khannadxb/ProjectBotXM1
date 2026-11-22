@@ -32,10 +32,16 @@ function initChart() {
         color: {
           up: '#00ff88',
           down: '#ff4444',
-          unchanged: '#888888',
+          unchanged: '#00ff88',
         },
-        borderColor: '#00ff88',
-        borderWidth: 1,
+        borderColor: {
+          up: '#00ff88',
+          down: '#ff4444',
+          unchanged: '#00ff88',
+        },
+        borderWidth: 2,
+        barPercentage: 0.9,
+        categoryPercentage: 0.9,
       }],
     },
     options: {
@@ -48,17 +54,43 @@ function initChart() {
           time: {
             unit: 'minute',
             displayFormats: { minute: 'HH:mm' },
+            tooltipFormat: 'HH:mm:ss',
           },
-          display: false,
+          title: {
+            display: true,
+            text: 'Time',
+            color: '#888',
+          },
+          ticks: { color: '#888', font: { size: 10 } },
+          grid: { color: 'rgba(255,255,255,0.05)' },
         },
         y: {
+          title: {
+            display: true,
+            text: 'Price',
+            color: '#888',
+          },
           grid: { color: 'rgba(255,255,255,0.05)' },
           ticks: { color: '#888', font: { size: 10 } },
         },
       },
       plugins: {
         legend: { display: false },
-        tooltip: { mode: 'nearest', intersect: false },
+        tooltip: {
+          mode: 'nearest',
+          intersect: false,
+          callbacks: {
+            label: function(context) {
+              const d = context.raw;
+              return [
+                `O: ${d.o.toFixed(2)}`,
+                `H: ${d.h.toFixed(2)}`,
+                `L: ${d.l.toFixed(2)}`,
+                `C: ${d.c.toFixed(2)}`,
+              ];
+            },
+          },
+        },
       },
     },
   });
