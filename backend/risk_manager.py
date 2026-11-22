@@ -410,20 +410,20 @@ if __name__ == "__main__":
         level: str = "INFO",
         meta_data: str | None = None,
     ) -> None:
-    """Write an audit log entry."""
-    session = await self._get_session()
-    try:
-        entry = AuditLog(
-            event_type=event_type,
-            message=message,
-            symbol=symbol,
-            level=level,
-            meta_data=meta_data,
-        )
-        session.add(entry)
-        await session.commit()
-    finally:
-        await session.close()
+        """Write an audit log entry."""
+        session = await self._get_session()
+        try:
+            entry = AuditLog(
+                event_type=event_type,
+                message=message,
+                symbol=symbol,
+                level=level,
+                meta_data=meta_data,
+            )
+            session.add(entry)
+            await session.commit()
+        finally:
+            await session.close()
 
 
 if __name__ == "__main__":
