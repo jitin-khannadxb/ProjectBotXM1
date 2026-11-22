@@ -584,10 +584,8 @@ async def v1_get_status(current_role: str = Depends(get_current_user)):
 @v1_router.post("/engine/start")
 async def v1_start_engine():
     global is_running, kill_switch_active
-    if kill_switch_active:
-        raise HTTPException(status_code=400, detail="Kill switch is active. Reset required.")
-    is_running = True
     kill_switch_active = False
+    is_running = True
     await manager.broadcast("logs", {
         "msg": "ENGINE STARTED",
         "type": "success",
@@ -737,8 +735,7 @@ async def get_status(current_role: str = Depends(get_current_user)):
 @app.post("/api/engine/start")
 async def start_engine():
     global is_running, kill_switch_active
-    if kill_switch_active:
-        raise HTTPException(status_code=400, detail="Kill switch is active. Reset required.")
+    kill_switch_active = False
     is_running = True
     await manager.broadcast("logs", {
         "msg": "ENGINE STARTED",
