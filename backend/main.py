@@ -11,11 +11,56 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depe
 from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_client import Counter, Gauge, Histogram, generate_latest
+from starlette.responses import Response
 
 from risk_manager import RiskManager
 from xm_api import XM_API
 from cache import cache
 from config import settings
+
+# ---------------------------------------------------------------------------
+# Prometheus metrics
+# ---------------------------------------------------------------------------
+
+REQUEST_COUNT = Counter(
+    "scalpai_http_requests_total",
+    "Total HTTP requests",
+    ["method", "endpoint", "status"],
+)
+REQUEST_DURATION = Histogram(
+    "scalpai_http_request_duration_seconds",
+    "HTTP request duration in seconds",
+    ["method", "endpoint"],
+)
+TRADE_COUNT = Counter(
+    "scalpai_trades_total",
+    "Total trades executed",
+    ["symbol", "side", "result"],
+)
+ENGINE_STATE = Gauge(
+    "scalpai_engine_state",
+    "Engine state (1=running, 0=stopped)",
+)
+KILL_SWITCH_STATE = Gauge(
+    "scalpai_kill_switch_state",
+    "Kill switch state (1=active, 0=inactive)",
+)
+DAILY_PNL = Gauge(
+    "scalpai_daily_pnl_usd",
+    "Daily P&L in USD",
+)
+CONNECTION_COUNT = Gauge(
+    "scalpai_websocket_connections",
+    "Active WebSocket connections",
+    ["channel"],
+)
+
+
+def record_request(method: str, endpoint: str, status_code: int, duration: float):
+    REQUEST_COUNT.labels(method=method, endpoint=endpoint, status=status_code).inc()
+    REQUEST_DURATION.labels(method=method, endpoint=endpoint).observe(duration)
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -467,6 +512,14 @@ else:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+    )
+
+
+@app.get("/metrics")
+async def metrics():
+    return Response(
+        content=generate_latest(),
+        media_type="text/plain",
     )
 
 
