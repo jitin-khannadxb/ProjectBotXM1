@@ -145,11 +145,11 @@ TRADE_SIMULATION_DELAY = 5.0
 # ---------------------------------------------------------------------------
 # Shared engine state
 # ---------------------------------------------------------------------------
-is_running = False
+is_running = True
 kill_switch_active = False
 current_price = 2341.28
 DEMO_MODE = False
-active_symbol = SYMBOLS_CONFIG[0] if SYMBOLS_CONFIG else "EURUSD"
+active_symbol = SYMBOLS_CONFIG[0] if SYMBOLS_CONFIG else "BTCUSD"
 
 # ---------------------------------------------------------------------------
 # WebSocket connection manager
@@ -516,6 +516,25 @@ async def lifespan(app: FastAPI):
 
     # Initialize Redis cache
     await cache.connect()
+
+    # Auto-start engine: ensure is_running is True and kill_switch is False
+    is_running = True
+    kill_switch_active = False
+
+    # Persist auto-start state to DB
+    session = await risk._get_session()
+    from sqlalchemy import select
+    from models import DailyState
+    today = datetime.now().strftime("%Y-%m-%d")
+    result = await session.execute(select(DailyState).where(DailyState.date == today))
+    state = result.scalar_one_or_none()
+    if state:
+        state.kill_switch_active = False
+        state.updated_at = datetime.now()
+    else:
+        state = DailyState(date=today, kill_switch_active=False)
+        session.add(state)
+    await session.commit()
 
     logger.info(
         f"Server initialized | DEMO_MODE={DEMO_MODE} | Symbols: {SYMBOLS_CONFIG} | "
