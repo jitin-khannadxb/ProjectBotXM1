@@ -318,9 +318,71 @@ async def engine_loop():
             if len(price_history) > 100:
                 price_history.pop(0)
 
-            # Trade cooldown: at least 120 seconds between trades
+            # Trade cooldown: at least 120 seconds between new trades
             now_ts = datetime.now().timestamp()
             if last_trade_ts and (now_ts - last_trade_ts) < 120:
+                await asyncio.sleep(LOOP_INTERVAL)
+                continue
+
+            # Maximum 1 position at a time for trailing stop management
+            open_positions = await _run_sync(xm.get_open_positions)
+            if open_positions and len(open_positions) >= 1:
+                # Trailing stop management: close when price retraces $2 from peak
+                trail_distance = 2.0  # Close if price retraces $2 from favorable move
+                for pos in open_positions:
+                    pos_ticket = pos.get("ticket") or pos.get("positionTicket") or pos.get("orderInternal", {}).get("ticket")
+                    pos_side = pos.get("orderInternal", {}).get("type", 0)  # 0=BUY, 1=SELL
+                    pos_open = pos.get("orderInternal", {}).get("openPrice", 0)
+                    pos_sl = pos.get("stopLoss", 0)
+                    pos_tp = pos.get("takeProfit", 0)
+                    pos_profit = pos.get("profit", 0)
+
+                    if pos_ticket and pos_open > 0:
+                        # Check if trailing stop should trigger close
+                        should_close = False
+                        close_reason = ""
+
+                        if pos_side == 0 and pos_profit >= 5.0:  # BUY with profit
+                            # Trail SL up: close if price drops $2 from current
+                            trail_sl = round(price - trail_distance, 2)
+                            if trail_sl > pos_open:  # Only move SL up (breakeven+)
+                                new_sl = max(pos_sl, trail_sl)
+                                if pos_sl < new_sl:
+                                    await manager.broadcast("logs", {
+                                        "msg": f"Trailing SL up: ticket {pos_ticket} {pos_sl:.2f} -> {new_sl:.2f} (profit ${pos_profit:.2f})",
+                                        "type": "info",
+                                        "time": trade_time,
+                                    })
+                                if price <= new_sl:
+                                    should_close = True
+                                    close_reason = f"Trailing SL hit at {new_sl:.2f}"
+                        elif pos_side == 1 and pos_profit >= 5.0:  # SELL with profit
+                            trail_sl = round(price + trail_distance, 2)
+                            if trail_sl < pos_open or pos_sl == 0:
+                                new_sl = min(pos_sl, trail_sl) if pos_sl > 0 else trail_sl
+                                if pos_sl < new_sl or pos_sl == 0:
+                                    await manager.broadcast("logs", {
+                                        "msg": f"Trailing SL down: ticket {pos_ticket} {pos_sl:.2f} -> {new_sl:.2f} (profit ${pos_profit:.2f})",
+                                        "type": "info",
+                                        "time": trade_time,
+                                    })
+                                if price >= new_sl:
+                                    should_close = True
+                                    close_reason = f"Trailing SL hit at {new_sl:.2f}"
+
+                        if should_close:
+                            close_result = await _run_sync(xm.close_order, pos_ticket)
+                            if close_result:
+                                realized_pnl = round(float(close_result.get("profit", pos_profit)), 2)
+                                result_str = "WIN" if realized_pnl > 0 else "LOSS"
+                                await risk.record_trade(realized_pnl, balance=account_balance, symbol=current_symbol, side="BUY" if pos_side == 0 else "SELL", price=price, size=pos.get("orderInternal", {}).get("volume", 0.01), result=result_str)
+                                TRADE_COUNT.labels(symbol=current_symbol, side="BUY" if pos_side == 0 else "SELL", result=result_str).inc()
+                                await manager.broadcast("logs", {
+                                    "msg": f"CLOSED via trailing — ticket {pos_ticket}: {result_str} | P&L ${realized_pnl:.2f} ({close_reason})",
+                                    "type": "success" if realized_pnl > 0 else "danger",
+                                    "time": trade_time,
+                                })
+                                await manager.broadcast("risk", await _build_risk_payload())
                 await asyncio.sleep(LOOP_INTERVAL)
                 continue
 
