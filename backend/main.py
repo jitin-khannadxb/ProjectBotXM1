@@ -328,9 +328,9 @@ async def engine_loop():
             # Only BUY in uptrend (price > SMA20 > SMA50), only SELL in downtrend (price < SMA20 < SMA50)
             side = None
             confidence = 0.0
-            if len(price_history) >= 50:
+            if len(price_history) >= 25:
                 sma20 = sum(price_history[-20:]) / 20
-                sma50 = sum(price_history[-50:]) / 50
+                sma50 = sum(price_history[-min(50, len(price_history)):]) / min(50, len(price_history))
 
                 # Calculate RSI (14-period)
                 changes = [price_history[i] - price_history[i-1] for i in range(-13, 0)]
