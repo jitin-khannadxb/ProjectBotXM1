@@ -495,53 +495,55 @@ async def engine_loop():
                 "time": trade_time,
             })
 
-            # Close the trade after delay (simulated P&L in demo, real close in live)
-            await asyncio.sleep(TRADE_SIMULATION_DELAY)
-
+            # In live mode, don't force-close — let XM run the trade until SL/TP is hit
             if DEMO_MODE:
-                # Simulate P&L for demo mode
+                # Simulated close after delay (demo mode only)
+                await asyncio.sleep(TRADE_SIMULATION_DELAY)
                 is_win = random.random() < 0.60
                 pnl = round(random.uniform(5.0, 25.0), 2) if is_win else round(random.uniform(-15.0, -5.0), 2)
                 result_str = "WIN" if pnl > 0 else "LOSS"
                 logger.info(f"[DEMO] Simulated close: {result_str} | P&L: ${pnl:,.2f}")
             else:
-                # Real close via XM_API
-                close_result = await _run_sync(xm.close_order, order_ticket)
-                if close_result:
-                    pnl = round(float(close_result.get("profit", 0.0)), 2)
-                    result_str = "WIN" if pnl > 0 else "LOSS"
-                    logger.info(f"REAL CLOSE — ticket {order_ticket}: {result_str} | P&L: ${pnl:,.2f}")
-                else:
-                    pnl = 0.0
-                    result_str = "UNKNOWN"
-                    logger.error(f"CLOSE FAILED — ticket {order_ticket}")
+                # Live mode: order placed and running — XM will close at SL/TP automatically
+                # Don't record as completed trade yet; position stays open
+                pnl = 0.0
+                result_str = "OPEN"
+                logger.info(f"LIVE ORDER RUNNING — ticket {order_ticket}: waiting for SL/TP")
 
             await risk.record_trade(pnl, balance=account_balance, symbol=current_symbol, side=side, price=price, size=lot_size, result=result_str)
 
             TRADE_COUNT.labels(symbol=current_symbol, side=side, result=result_str).inc()
             DAILY_PNL.set(state["daily_pnl"])
 
-            # Broadcast trade close
-            await manager.broadcast("trades", {
-                "id": order_ticket,
-                "time": datetime.now().strftime("%H:%M:%S"),
-                "symbol": current_symbol,
-                "side": side,
-                "price": price,
-                "size": lot_size,
-                "pnl": pnl,
-                "result": result_str,
-            })
+            if DEMO_MODE:
+                # Broadcast trade close (demo mode only)
+                await manager.broadcast("trades", {
+                    "id": order_ticket,
+                    "time": datetime.now().strftime("%H:%M:%S"),
+                    "symbol": current_symbol,
+                    "side": side,
+                    "price": price,
+                    "size": lot_size,
+                    "pnl": pnl,
+                    "result": result_str,
+                })
 
-            # Broadcast updated risk state
-            await manager.broadcast("risk", await _build_risk_payload())
+                # Broadcast updated risk state
+                await manager.broadcast("risk", await _build_risk_payload())
 
-            # Broadcast log
-            await manager.broadcast("logs", {
-                "msg": f"CLOSED — {current_symbol} {result_str} | P&L: ${pnl:,.2f}",
-                "type": "success" if pnl > 0 else "danger",
-                "time": datetime.now().strftime("%H:%M:%S"),
-            })
+                # Broadcast log
+                await manager.broadcast("logs", {
+                    "msg": f"CLOSED — {current_symbol} {result_str} | P&L: ${pnl:,.2f}",
+                    "type": "success" if pnl > 0 else "danger",
+                    "time": datetime.now().strftime("%H:%M:%S"),
+                })
+            else:
+                # Live mode: broadcast that order is running (will be closed by XM at SL/TP)
+                await manager.broadcast("logs", {
+                    "msg": f"LIVE ORDER RUNNING — {current_symbol} {side} {lot_size} lots @ {price:.2f} | SL: {sl_price:.2f} | TP: {tp_price:.2f}",
+                    "type": "info",
+                    "time": trade_time,
+                })
 
         except Exception as exc:
             logger.error(f"Engine loop error: {exc}")
