@@ -318,15 +318,77 @@ async def engine_loop():
             if len(price_history) > 100:
                 price_history.pop(0)
 
-            # Trade cooldown: at least 60 seconds between trades
+            # Trade cooldown: at least 120 seconds between trades
             now_ts = datetime.now().timestamp()
-            if last_trade_ts and (now_ts - last_trade_ts) < 60:
+            if last_trade_ts and (now_ts - last_trade_ts) < 120:
                 await asyncio.sleep(LOOP_INTERVAL)
                 continue
 
-            # Simple test: trade every cycle (alternating BUY/SELL)
-            side = "BUY" if len(price_history) % 2 == 0 else "SELL"
-            confidence = 100.0
+            # Trend-following strategy with RSI filter
+            # Only BUY in uptrend (price > SMA20 > SMA50), only SELL in downtrend (price < SMA20 < SMA50)
+            side = None
+            confidence = 0.0
+            if len(price_history) >= 50:
+                sma20 = sum(price_history[-20:]) / 20
+                sma50 = sum(price_history[-50:]) / 50
+
+                # Calculate RSI (14-period)
+                changes = [price_history[i] - price_history[i-1] for i in range(-13, 0)]
+                gains = sum(c for c in changes if c > 0)
+                losses = sum(abs(c) for c in changes if c < 0)
+                rs = gains / losses if losses > 0 else 100
+                rsi = 100 - (100 / (1 + rs))
+
+                trend_strength = abs(sma20 - sma50) / sma50 * 100
+
+                if price > sma20 and sma20 > sma50:
+                    # Uptrend — BUY only if not overbought (RSI < 70)
+                    if rsi < 70:
+                        side = "BUY"
+                        confidence = min(95.0, 60.0 + trend_strength * 20 + max(0, 70 - rsi))
+                    else:
+                        await manager.broadcast("logs", {
+                            "msg": f"Uptrend but RSI overbought ({rsi:.1f}) — skipping BUY",
+                            "type": "info",
+                            "time": trade_time,
+                        })
+                        await asyncio.sleep(LOOP_INTERVAL)
+                        continue
+                elif price < sma20 and sma20 < sma50:
+                    # Downtrend — SELL only if not oversold (RSI > 30)
+                    if rsi > 30:
+                        side = "SELL"
+                        confidence = min(95.0, 60.0 + trend_strength * 20 + max(0, rsi - 30))
+                    else:
+                        await manager.broadcast("logs", {
+                            "msg": f"Downtrend but RSI oversold ({rsi:.1f}) — skipping SELL",
+                            "type": "info",
+                            "time": trade_time,
+                        })
+                        await asyncio.sleep(LOOP_INTERVAL)
+                        continue
+                else:
+                    await manager.broadcast("logs", {
+                        "msg": f"No clear trend (SMA20={sma20:.2f}, SMA50={sma50:.2f}) — skipping",
+                        "type": "info",
+                        "time": trade_time,
+                    })
+                    await asyncio.sleep(LOOP_INTERVAL)
+                    continue
+            else:
+                await asyncio.sleep(LOOP_INTERVAL)
+                continue
+
+            # Minimum 60% confidence to trade
+            if confidence < 60.0:
+                await manager.broadcast("logs", {
+                    "msg": f"Confidence {confidence:.1f}% below 60% — skipping",
+                    "type": "info",
+                    "time": trade_time,
+                })
+                await asyncio.sleep(LOOP_INTERVAL)
+                continue
+
             last_trade_ts = now_ts
 
             # Pip size per symbol: GOLD = 0.1, BTCUSD/crypto = 1.0, forex = 0.0001
