@@ -154,11 +154,11 @@ MIN_CONFIDENCE: float = 50.0
 # Dynamic risk parameters (configurable via API)
 RISK_PARAMS: dict = {
     "daily_loss_limit_pct": 2.0,
-    "max_consecutive_losses": 3,
+    "max_consecutive_losses": 10,
     "single_trade_risk_pct": 1.0,
     "max_positions": 2,
-    "lot_size": 0.01,
-    "sl_pips": 150,
+    "lot_size": 50.0,
+    "sl_pips": 100,
     "tp_pips": 300,
     "max_daily_trades": 50,
 }
@@ -217,7 +217,7 @@ account_id = os.environ.get("MTAPI_ACCOUNT_ID", "YOUR_ACCOUNT_ID_HERE")
 xm = XM_API(api_key=api_key, account_id=account_id)
 risk = RiskManager()
 
-account_balance = 10000.0
+account_balance = 1000000.0
 risk_limits = risk.calculate_limits(account_balance, RISK_PARAMS)
 # ---------------------------------------------------------------------------
 # Engine loop
