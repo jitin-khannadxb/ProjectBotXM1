@@ -154,10 +154,10 @@ MIN_CONFIDENCE: float = 50.0
 # Dynamic risk parameters (configurable via API)
 RISK_PARAMS: dict = {
     "daily_loss_limit_pct": 2.0,
-    "max_consecutive_losses": 10,
+    "max_consecutive_losses": 5,
     "single_trade_risk_pct": 1.0,
     "max_positions": 2,
-    "lot_size": 50.0,
+    "lot_size": 0.1,
     "sl_pips": 100,
     "tp_pips": 300,
     "max_daily_trades": 50,

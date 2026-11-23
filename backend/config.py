@@ -31,13 +31,13 @@ class Settings(BaseSettings):
     REDIS_CACHE_TTL: int = 60
 
     # --- Risk ---
-    DEFAULT_BALANCE: float = 1000000.0
+    DEFAULT_BALANCE: float = 1000.0
     DEFAULT_TARGET_PCT: float = 0.02
     DEFAULT_MAX_LOSS_PCT: float = 0.01
     DEFAULT_RISK_PER_TRADE_PCT: float = 0.015
     DEFAULT_SL_PIPS: int = 150
     DEFAULT_TP_PIPS: int = 300
-    DEFAULT_LOT_SIZE: float = 50.0
+    DEFAULT_LOT_SIZE: float = 0.1
     PROFIT_WITHDRAW_THRESHOLD: float = 100.0
     MAX_DAILY_TRADES: int = 50
     MAX_POSITIONS_PER_SYMBOL: int = 1
